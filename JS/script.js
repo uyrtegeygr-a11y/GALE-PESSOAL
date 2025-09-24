@@ -76,18 +76,18 @@ async function handleLogin(event) {
     const email = document.getElementById('email').value.trim();
 
     if (!email) {
-        showToast('\u00A0 Por favor, insira um email válido', 'error');
+        showToast(' Por favor, insira um email válido', 'error');
         return;
     }
 
     // Validação básica de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        showToast('\u00A0 Por favor, insira um email válido', 'error');
+        showToast(' Por favor, insira um email válido', 'error');
         return;
     }
 
-    showLoading('\u00A0 Fazendo login...');
+    showLoading(' Fazendo login...');
 
     try {
         // Fazer login localmente primeiro
@@ -96,17 +96,17 @@ async function handleLogin(event) {
 
         // Tentar logar na planilha (não bloquear o login se falhar)
         logUserActivity(email, 'login').catch(error => {
-            console.warn('\u00A0 Aviso: Não foi possível logar atividade na planilha:', error);
-            showToast('\u00A0 Login realizado (modo offline)', 'warning');
+            console.warn(' Aviso: Não foi possível logar atividade na planilha:', error);
+            showToast(' Login realizado (modo offline)', 'warning');
         });
 
         hideLoading();
         showGalleryScreen();
-        showToast('\u00A0 Login realizado com sucesso!', 'success');
+        showToast(' Login realizado com sucesso!', 'success');
 
     } catch (error) {
         hideLoading();
-        showToast('\u00A0 Erro ao fazer login. Tente novamente.', 'error');
+        showToast(' Erro ao fazer login. Tente novamente.', 'error');
         console.error('Erro no login:', error);
     }
 }
@@ -218,14 +218,14 @@ async function handleUpload(event) {
         hideLoading();
         loadPhotos();
         updateStats();
-        showToast(`\u00A0 ${files.length} foto(s) enviada(s) com sucesso!`, 'success');
+        showToast(` ${files.length} foto(s) enviada(s) com sucesso!`, 'success');
 
         // Switch to gallery tab
         switchTab('gallery');
 
     } catch (error) {
         hideLoading();
-        showToast('\u00A0 Erro ao fazer upload. Tente novamente.', 'error');
+        showToast(' Erro ao fazer upload. Tente novamente.', 'error');
         console.error('Erro no upload:', error);
     }
 }
@@ -360,7 +360,7 @@ function displayPhotos(photosToShow) {
     `).join('');
 }
 
-// API calls para planilha (agora com tratamento de erro melhorado)
+// API calls para planilha (otimizado para SheetMonkey)
 async function logUserActivity(email, activity) {
     try {
         const response = await fetch(SHEET_API_URL, {
@@ -391,8 +391,19 @@ async function logUserActivity(email, activity) {
 
 async function logPhotoUpload(photoData) {
     try {
-        // Converter imagem para base64 mais compacta (thumbnail)
-        const thumbnailData = await createThumbnail(photoData.data, 200, 200);
+        // Criar thumbnail otimizado para SheetMonkey
+        const thumbnailData = await createOptimizedThumbnail(photoData.data, 600, 600);
+
+        // Verificar tamanho do base64 antes de enviar
+        const base64Size = thumbnailData.length;
+        console.log(`Tamanho do thumbnail: ${Math.round(base64Size / 1024)}KB`);
+
+        // Se muito grande, reduzir mais
+        let finalThumbnail = thumbnailData;
+        if (base64Size > 100000) { // Se maior que ~100KB
+            finalThumbnail = await createOptimizedThumbnail(photoData.data, 500, 500);
+            console.log('Thumbnail reduzido para compatibilidade com SheetMonkey');
+        }
 
         const response = await fetch(SHEET_API_URL, {
             method: 'POST',
@@ -407,7 +418,7 @@ async function logPhotoUpload(photoData) {
                 PhotoType: photoData.type,
                 Tags: photoData.tags.join(', '),
                 UploadDate: photoData.uploadDate,
-                Thumbnail: thumbnailData,
+                Thumbnail: finalThumbnail,
                 Type: 'photo_upload'
             })
         });
@@ -424,7 +435,7 @@ async function logPhotoUpload(photoData) {
     }
 }
 
-async function createThumbnail(imageData, maxWidth, maxHeight) {
+async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = function () {
@@ -433,23 +444,33 @@ async function createThumbnail(imageData, maxWidth, maxHeight) {
 
             // Calcular dimensões mantendo proporção
             let { width, height } = img;
+            const aspectRatio = width / height;
+
+            // Redimensionar para o tamanho ideal
             if (width > height) {
                 if (width > maxWidth) {
-                    height = (height * maxWidth) / width;
                     width = maxWidth;
+                    height = width / aspectRatio;
                 }
             } else {
                 if (height > maxHeight) {
-                    width = (width * maxHeight) / height;
                     height = maxHeight;
+                    width = height * aspectRatio;
                 }
             }
 
             canvas.width = width;
             canvas.height = height;
 
+            // Configurar contexto para boa qualidade
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+
+            // Desenhar imagem
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.7));
+
+            // Retornar com qualidade otimizada (80% - equilibrio perfeito)
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.src = imageData;
     });
@@ -495,10 +516,10 @@ async function deleteCurrentPhoto() {
         displayPhotos(photos);
         updatePhotoCount();
         closeModal();
-        showToast('\u00A0 Foto excluída com sucesso!', 'success');
+        showToast(' Foto excluída com sucesso!', 'success');
     } catch (error) {
-        showToast('\u00A0 Erro ao excluir foto', 'error');
-        console.error('\u00A0 Erro ao excluir foto:', error);
+        showToast(' Erro ao excluir foto', 'error');
+        console.error(' Erro ao excluir foto:', error);
     }
 }
 
@@ -562,10 +583,10 @@ async function deleteSelectedPhotos() {
         updateBulkActions();
 
         hideLoading();
-        showToast('\u00A0 Fotos excluídas com sucesso!', 'success');
+        showToast(' Fotos excluídas com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast('\u00A0 Erro ao excluir fotos', 'error');
+        showToast(' Erro ao excluir fotos', 'error');
         console.error('Erro ao excluir fotos:', error);
     }
 }
@@ -642,10 +663,10 @@ async function syncData() {
         }
 
         hideLoading();
-        showToast('\u00A0 Dados sincronizados com sucesso!', 'success');
+        showToast(' Dados sincronizados com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast('\u00A0 Sincronização realizada localmente', 'warning');
+        showToast(' Sincronização realizada localmente', 'warning');
         console.warn('Erro na sincronização:', error);
     }
 }
