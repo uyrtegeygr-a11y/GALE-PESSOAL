@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galeria Pessoal de Fotos</title>
+    <link rel="stylesheet" href="./CSS/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+     <!-- Tela de Login -->
+    <div id="loginScreen" class="screen active">
+        <div class="login-container">
+            <div class="login-card">
+                <div class="login-header">
+                    <i class="fas fa-camera"></i>
+                    <h1>Galeria Pessoal</h1>
+                    <p>Armazene suas fotos com segurança e acesse de qualquer lugar usando apenas seu email.</p>
+                </div>
+                <form id="loginForm" class="login-form">
+                    <div class="input-group">
+                        <label for="email">Email</label>
+                        <div class="input-with-icon">
+                            <i class="fas fa-envelope" style="pointer-events: none;"></i>
+                            <input type="email" id="email" placeholder="seu@email.com" required>
+                        </div>
+                    </div>
+                    <button type="submit" id="loginBtn" class="btn btn-primary">
+                        <i class="fas fa-sign-in-alt"></i>
+                        Acessar Galeria
+                    </button>
+                    <div class="privacy-note">
+                        <p>🔒 Suas fotos são armazenadas com segurança e privacidade.</p>
+                        <p>Não é necessária senha - apenas seu email para identificação.</p>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tela Principal da Galeria -->
+    <div id="galleryScreen" class="screen">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="logo">
+                        <i class="fas fa-camera"></i>
+                    </div>
+                    <div class="user-info">
+                        <h1>Galeria Pessoal</h1>
+                        <span id="userEmail"></span>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <span id="photoCount" class="photo-count">0 fotos</span>
+                    
+                    <button id="logoutBtn" class="btn btn-outline">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navegação por Abas -->
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="gallery">
+                <i class="fas fa-images"></i>
+                Galeria
+            </button>
+            <button class="tab-btn" data-tab="upload">
+                <i class="fas fa-upload"></i>
+                Upload
+            </button>
+            <button class="tab-btn" data-tab="settings">
+                <i class="fas fa-cog"></i>
+                Configurações
+            </button>
+        </nav>
+
+        <!-- Conteúdo das Abas -->
+        <main class="main-content">
+            <!-- Aba Galeria -->
+            <div id="galleryTab" class="tab-content active">
+                <!-- Busca -->
+                <div class="search-section">
+                    <div class="search-inputs">
+                        <div class="input-group">
+                            <label for="searchQuery">Buscar Fotos</label>
+                            <div class="input-with-icon">
+                                <i class="fas fa-search" style="pointer-events: none;"></i>
+                                <input type="text" id="searchQuery" placeholder="   Buscar por nome ou conteúdo...">
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="searchTags">Filtrar por Tags</label>
+                            <input type="text" id="searchTags" placeholder="viagem, família, natureza...">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Seleção em Massa -->
+                <div id="bulkActions" class="bulk-actions hidden">
+                    <span id="selectedCount">0 fotos selecionadas</span>
+                    <div class="bulk-buttons">
+                        <button id="clearSelectionBtn" class="btn btn-outline">Limpar Seleção</button>
+                        <button id="deleteSelectedBtn" class="btn btn-danger">
+                            <i class="fas fa-trash"></i>
+                            Excluir Selecionadas
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grid de Fotos -->
+                <div id="photoGrid" class="photo-grid">
+                    <div class="empty-state">
+                        <i class="fas fa-images"></i>
+                        <h3>Nenhuma foto ainda</h3>
+                        <p>Faça upload de algumas fotos para começar</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Aba Upload -->
+            <div id="uploadTab" class="tab-content">
+                <div class="upload-card">
+                    <div class="upload-header">
+                        <i class="fas fa-upload"></i>
+                        <h2>Upload de Fotos</h2>
+                    </div>
+                    <form id="uploadForm" class="upload-content">
+                        <div class="file-input-section">
+                            <label for="fileInput">Selecionar Fotos</label>
+                            <input type="file" id="fileInput" multiple accept="image/*">
+                            <div class="drop-zone" id="dropZone">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Arraste e solte suas fotos aqui ou clique para selecionar</p>
+                            </div>
+                        </div>
+
+                        <div id="previewSection" class="preview-section hidden">
+                            <h3>Fotos Selecionadas</h3>
+                            <div id="previewGrid" class="preview-grid"></div>
+                        </div>
+
+                        <div class="tags-section">
+                            <label for="photoTags">Tags (separadas por vírgula)</label>
+                            <textarea id="photoTags" placeholder="viagem, família, natureza..." rows="2"></textarea>
+                        </div>
+
+                        <button type="submit" id="uploadBtn" class="btn btn-primary" disabled>
+                            <i class="fas fa-upload"></i>
+                            Fazer Upload
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Aba Configurações -->
+            <div id="settingsTab" class="tab-content">
+                <div class="settings-section">
+                    <button id="syncBtn" class="btn btn-outline" style="width: 220px; " >
+                        <i class="fas fa-cloud"></i> Sincronizar Agora
+                    </button>
+                    <div class="settings-card">
+                        <div class="settings-header">
+                            <i class="fas fa-chart-bar"></i>
+                            <h2>Estatísticas de Uso</h2>
+                        </div>
+                        <div class="settings-content">
+                            <div class="stats-grid">
+                                <div class="stat-item">
+                                    <i class="fas fa-users"></i>
+                                    <div>
+                                        <strong>Usuários Únicos:</strong>
+                                        <span id="uniqueUsers">0</span>
+                                    </div>
+                                </div>
+                                <div class="stat-item">
+                                    <i class="fas fa-images"></i>
+                                    <div>
+                                        <strong>Total de Fotos:</strong>
+                                        <span id="totalPhotos">0</span>
+                                    </div>
+                                </div>
+                                <div class="stat-item">
+                                    <i class="fas fa-calendar"></i>
+                                    <div>
+                                        <strong>Uploads Hoje:</strong>
+                                        <span id="todayUploads">0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <div class="settings-header">
+                            <i class="fas fa-database"></i>
+                            <h2>Informações de Armazenamento</h2>
+                        </div>
+                        <div class="settings-content">
+                            <div class="storage-info">
+                                <div class="info-item">
+                                    <strong>Fotos Locais:</strong>
+                                    <span id="localPhotoCount">0 fotos armazenadas</span>
+                                </div>
+                                <div class="info-item">
+                                    <strong>Tipo de Armazenamento:</strong>
+                                    <span> Bancos de dados protegidos + Server Privado</span>
+                                </div>
+                            </div>
+                            
+                            <div class="privacy-info">
+                                <p><strong>Nota de Privacidade:</strong> Suas fotos são armazenadas com segurança e seus dados são protegidos contra acesso não autorizado. Nenhum terceiro tem acesso aos seus dados pessoais.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal do Visualizador de Fotos -->
+    <div id="photoModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalPhotoName"></h2>
+                <div class="modal-actions">
+                    <button id="downloadPhotoBtn" class="btn btn-outline">
+                        <i class="fas fa-download"></i>
+                        Baixar
+                    </button>
+                    <button id="deletePhotoBtn" class="btn btn-danger">
+                        <i class="fas fa-trash"></i>
+                        Excluir
+                    </button>
+                    <button id="closeModalBtn" class="btn btn-outline">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="photo-display">
+                    <img id="modalPhoto" src="" alt="">
+                </div>
+                <div class="photo-details">
+                    <h3>Detalhes da Foto</h3>
+                    <div class="detail-item">
+                        <i class="fas fa-file-image"></i>
+                        <div>
+                            <strong>Nome Original:</strong>
+                            <span id="modalOriginalName"></span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-calendar"></i>
+                        <div>
+                            <strong>Data de Upload:</strong>
+                            <span id="modalUploadDate"></span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-weight-hanging"></i>
+                        <div>
+                            <strong>Tamanho do Arquivo:</strong>
+                            <span id="modalFileSize"></span>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-file"></i>
+                        <div>
+                            <strong>Tipo de Arquivo:</strong>
+                            <span id="modalFileType"></span>
+                        </div>
+                    </div>
+                    <div id="modalTagsSection" class="detail-item">
+                        <i class="fas fa-tags"></i>
+                        <div>
+                            <strong>Tags:</strong>
+                            <div id="modalTags" class="tags-display"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p id="loadingText">Carregando...</p>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="JS/script.js"></script>
+</body>
+</html>
