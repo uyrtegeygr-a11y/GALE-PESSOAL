@@ -6,6 +6,8 @@ let currentUser = null;
 let photos = [];
 let selectedPhotos = new Set();
 let isUploading = false; // Prevenir uploads simultâneos
+let uploadQueue = new Set(); // Rastrear arquivos em upload
+let processingFiles = new Map(); // Rastrear arquivos sendo processados
 
 // Elementos DOM
 const loginScreen = document.getElementById('loginScreen');
@@ -41,9 +43,14 @@ function setupEventListeners() {
     // Login
     loginForm.addEventListener('submit', handleLogin);
 
-    // Upload
+    // Upload - usar apenas um listener para evitar duplicação
+    uploadForm.removeEventListener('submit', handleUpload); // Remove listener existente se houver
     uploadForm.addEventListener('submit', handleUpload);
+    
+    // File input - prevenir múltiplos eventos
+    fileInput.removeEventListener('change', handleFileSelect);
     fileInput.addEventListener('change', handleFileSelect);
+    
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', handleDragOver);
     dropZone.addEventListener('drop', handleDrop);
@@ -128,12 +135,39 @@ function handleLogout() {
     document.getElementById('email').value = '';
     photos = [];
     selectedPhotos.clear();
+    // Limpar filas de upload
+    uploadQueue.clear();
+    processingFiles.clear();
+    isUploading = false;
 }
 
-// Upload de fotos
+// Upload de fotos - versão melhorada
 function handleFileSelect(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Prevenir processamento múltiplo do mesmo evento
+    if (event.target.dataset.processing === 'true') {
+        return;
+    }
+    
+    event.target.dataset.processing = 'true';
+    
+    setTimeout(() => {
+        event.target.dataset.processing = 'false';
+    }, 1000);
+    
     const files = Array.from(event.target.files);
-    displayPreview(files);
+    console.log(`Arquivos selecionados: ${files.length}`);
+    
+    // Filtrar apenas arquivos de imagem
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    
+    if (imageFiles.length !== files.length) {
+        showToast(`${files.length - imageFiles.length} arquivo(s) ignorado(s) (apenas imagens são aceitas)`, 'warning');
+    }
+    
+    displayPreview(imageFiles);
 }
 
 function handleDragOver(event) {
@@ -194,6 +228,7 @@ function removePreview(index) {
 
 async function handleUpload(event) {
     event.preventDefault();
+    event.stopPropagation();
 
     // Prevenir uploads simultâneos
     if (isUploading) {
@@ -209,11 +244,33 @@ async function handleUpload(event) {
         return;
     }
 
+    // Verificar se algum arquivo já está sendo processado
+    const alreadyProcessing = files.some(file => {
+        const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+        return processingFiles.has(fileKey);
+    });
+
+    if (alreadyProcessing) {
+        showToast('Alguns arquivos já estão sendo processados. Aguarde...', 'warning');
+        return;
+    }
+
+    // Marcar arquivos como sendo processados
+    files.forEach(file => {
+        const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+        processingFiles.set(fileKey, true);
+    });
+
     // Verificar duplicatas antes do upload
     const duplicates = await checkForDuplicates(files);
     if (duplicates.length > 0) {
         const duplicateNames = duplicates.map(f => f.name).join(', ');
         if (!confirm(`As seguintes fotos já existem: ${duplicateNames}\n\nDeseja continuar mesmo assim?`)) {
+            // Limpar arquivos do processamento se cancelado
+            files.forEach(file => {
+                const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+                processingFiles.delete(fileKey);
+            });
             return;
         }
     }
@@ -226,14 +283,29 @@ async function handleUpload(event) {
         let successCount = 0;
         let errorCount = 0;
 
+        // Processar arquivos sequencialmente para evitar problemas de concorrência
         for (const [index, file] of files.entries()) {
+            const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+            
             try {
                 showLoading(`Fazendo upload da foto ${index + 1} de ${files.length}...`);
+                
+                // Verificar novamente se não foi processado por outro processo
+                if (uploadQueue.has(fileKey)) {
+                    console.warn(`Arquivo ${file.name} já está na fila de upload`);
+                    continue;
+                }
+                
+                uploadQueue.add(fileKey);
                 await uploadSinglePhoto(file, tags);
                 successCount++;
+                
             } catch (error) {
                 console.error(`Erro no upload da foto ${file.name}:`, error);
                 errorCount++;
+            } finally {
+                uploadQueue.delete(fileKey);
+                processingFiles.delete(fileKey);
             }
         }
 
@@ -244,6 +316,9 @@ async function handleUpload(event) {
         document.getElementById('uploadBtn').disabled = true;
 
         hideLoading();
+        
+        // Aguardar um pouco antes de recarregar para garantir que todos os uploads foram processados
+        await new Promise(resolve => setTimeout(resolve, 500));
         await loadPhotos(); // Recarregar fotos após upload
         updateStats();
 
@@ -264,6 +339,13 @@ async function handleUpload(event) {
     } finally {
         isUploading = false;
         document.getElementById('uploadBtn').disabled = false;
+        
+        // Limpar todas as filas
+        uploadQueue.clear();
+        files.forEach(file => {
+            const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+            processingFiles.delete(fileKey);
+        });
     }
 }
 
@@ -273,9 +355,9 @@ async function checkForDuplicates(files) {
     for (const file of files) {
         const fileHash = await generateFileHash(file);
         const existingPhoto = photos.find(photo => 
-            photo.name === file.name || 
             photo.fileHash === fileHash ||
-            (photo.size === file.size && photo.type === file.type)
+            (photo.name === file.name && photo.size === file.size && 
+             Math.abs(new Date(photo.uploadDate).getTime() - Date.now()) < 60000) // Dentro de 1 minuto
         );
         
         if (existingPhoto) {
@@ -287,10 +369,15 @@ async function checkForDuplicates(files) {
 }
 
 async function generateFileHash(file) {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        const buffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (error) {
+        // Fallback: usar nome, tamanho e data como identificador
+        return `${file.name}-${file.size}-${file.lastModified}`;
+    }
 }
 
 async function uploadSinglePhoto(file, tags) {
@@ -299,6 +386,14 @@ async function uploadSinglePhoto(file, tags) {
         reader.onload = async function (e) {
             try {
                 const fileHash = await generateFileHash(file);
+                
+                // Verificar duplicata por hash antes de processar
+                const existingPhoto = photos.find(photo => photo.fileHash === fileHash);
+                if (existingPhoto) {
+                    console.warn(`Foto duplicada detectada: ${file.name} (hash: ${fileHash})`);
+                    resolve(); // Não falhar, apenas pular
+                    return;
+                }
                 
                 const photoData = {
                     id: generateUniqueId(),
@@ -313,15 +408,7 @@ async function uploadSinglePhoto(file, tags) {
                     userEmail: currentUser
                 };
 
-                // Verificar se já existe uma foto com o mesmo hash
-                const existingPhoto = photos.find(photo => photo.fileHash === fileHash);
-                if (existingPhoto) {
-                    console.warn(`Foto duplicada detectada: ${file.name}`);
-                    resolve(); // Não falhar, apenas pular
-                    return;
-                }
-
-                // Salvar localmente
+                // Salvar localmente com verificação adicional
                 await savePhotoLocally(photoData);
 
                 // Tentar enviar para a planilha (não bloquear se falhar)
@@ -339,10 +426,10 @@ async function uploadSinglePhoto(file, tags) {
     });
 }
 
-// Armazenamento local
+// Armazenamento local - versão melhorada
 async function savePhotoLocally(photoData) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 2); // Incrementar versão
+        const request = indexedDB.open('PhotoGallery', 3); // Incrementar versão
 
         request.onerror = () => reject(request.error);
 
@@ -351,37 +438,54 @@ async function savePhotoLocally(photoData) {
             const transaction = db.transaction(['photos'], 'readwrite');
             const store = transaction.objectStore('photos');
 
-            // Verificar duplicata antes de adicionar
-            const checkRequest = store.get(photoData.id);
-            checkRequest.onsuccess = () => {
-                if (checkRequest.result) {
-                    console.warn(`Foto com ID ${photoData.id} já existe`);
+            // Verificar múltiplas condições de duplicata
+            const checkByHash = store.index('fileHash').get(photoData.fileHash);
+            
+            checkByHash.onsuccess = () => {
+                if (checkByHash.result) {
+                    console.warn(`Foto com hash ${photoData.fileHash} já existe`);
                     resolve(); // Não adicionar duplicata
                     return;
                 }
 
-                const addRequest = store.add(photoData);
-                addRequest.onsuccess = () => resolve();
-                addRequest.onerror = () => reject(addRequest.error);
+                // Verificar por ID também
+                const checkById = store.get(photoData.id);
+                checkById.onsuccess = () => {
+                    if (checkById.result) {
+                        console.warn(`Foto com ID ${photoData.id} já existe`);
+                        resolve(); // Não adicionar duplicata
+                        return;
+                    }
+
+                    // Adicionar foto se não existir
+                    const addRequest = store.add(photoData);
+                    addRequest.onsuccess = () => {
+                        console.log(`Foto salva localmente: ${photoData.name}`);
+                        resolve();
+                    };
+                    addRequest.onerror = () => {
+                        console.error('Erro ao adicionar foto:', addRequest.error);
+                        reject(addRequest.error);
+                    };
+                };
+                checkById.onerror = () => reject(checkById.error);
             };
-            checkRequest.onerror = () => reject(checkRequest.error);
+            checkByHash.onerror = () => reject(checkByHash.error);
         };
 
         request.onupgradeneeded = () => {
             const db = request.result;
-            if (!db.objectStoreNames.contains('photos')) {
-                const store = db.createObjectStore('photos', { keyPath: 'id' });
-                store.createIndex('userEmail', 'userEmail', { unique: false });
-                store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                store.createIndex('fileHash', 'fileHash', { unique: true }); // Índice único para hash
-            } else {
-                // Atualizar store existente
-                const transaction = request.transaction;
-                const store = transaction.objectStore('photos');
-                if (!store.indexNames.contains('fileHash')) {
-                    store.createIndex('fileHash', 'fileHash', { unique: true });
-                }
+            
+            // Remover store antigo se existir para recriar com nova estrutura
+            if (db.objectStoreNames.contains('photos')) {
+                db.deleteObjectStore('photos');
             }
+            
+            const store = db.createObjectStore('photos', { keyPath: 'id' });
+            store.createIndex('userEmail', 'userEmail', { unique: false });
+            store.createIndex('uploadDate', 'uploadDate', { unique: false });
+            store.createIndex('fileHash', 'fileHash', { unique: true });
+            store.createIndex('nameSize', ['name', 'size'], { unique: false });
         };
     });
 }
@@ -394,14 +498,22 @@ async function loadPhotos() {
         // Remover duplicatas baseadas em hash se existirem
         const uniquePhotos = [];
         const seenHashes = new Set();
+        const seenIds = new Set();
         
         for (const photo of photos) {
-            if (photo.fileHash && seenHashes.has(photo.fileHash)) {
-                // Remover duplicata do storage
+            // Pular se ID já foi visto
+            if (seenIds.has(photo.id)) {
                 await deletePhotoFromStorage(photo.id);
                 continue;
             }
             
+            // Pular se hash já foi visto
+            if (photo.fileHash && seenHashes.has(photo.fileHash)) {
+                await deletePhotoFromStorage(photo.id);
+                continue;
+            }
+            
+            seenIds.add(photo.id);
             if (photo.fileHash) {
                 seenHashes.add(photo.fileHash);
             }
@@ -420,7 +532,7 @@ async function loadPhotos() {
 
 async function getPhotosFromStorage() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 2);
+        const request = indexedDB.open('PhotoGallery', 3);
 
         request.onerror = () => reject(request.error);
 
@@ -441,6 +553,7 @@ async function getPhotosFromStorage() {
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
                 store.createIndex('fileHash', 'fileHash', { unique: true });
+                store.createIndex('nameSize', ['name', 'size'], { unique: false });
             }
         };
     });
@@ -697,7 +810,7 @@ async function deleteSelectedPhotos() {
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 2);
+        const request = indexedDB.open('PhotoGallery', 3);
 
         request.onerror = () => reject(request.error);
 
@@ -800,7 +913,8 @@ function generateUniqueId() {
     const timestamp = Date.now().toString(36);
     const random = Math.random().toString(36).substr(2, 9);
     const counter = (generateUniqueId.counter = (generateUniqueId.counter || 0) + 1).toString(36);
-    return `${timestamp}-${random}-${counter}`;
+    const userPrefix = currentUser ? currentUser.substring(0, 3) : 'usr';
+    return `${userPrefix}-${timestamp}-${random}-${counter}`;
 }
 
 function formatDate(dateString) {
