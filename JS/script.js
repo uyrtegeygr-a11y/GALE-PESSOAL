@@ -426,10 +426,10 @@ async function uploadSinglePhoto(file, tags) {
     });
 }
 
-// Armazenamento local - versão melhorada
+// Armazenamento local - versão melhorada com compatibilidade
 async function savePhotoLocally(photoData) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 3); // Incrementar versão
+        const request = indexedDB.open('PhotoGallery', 4); // Incrementar versão
 
         request.onerror = () => reject(request.error);
 
@@ -438,20 +438,40 @@ async function savePhotoLocally(photoData) {
             const transaction = db.transaction(['photos'], 'readwrite');
             const store = transaction.objectStore('photos');
 
-            // Verificar múltiplas condições de duplicata
-            const checkByHash = store.index('fileHash').get(photoData.fileHash);
-            
-            checkByHash.onsuccess = () => {
-                if (checkByHash.result) {
-                    console.warn(`Foto com hash ${photoData.fileHash} já existe`);
-                    resolve(); // Não adicionar duplicata
-                    return;
+            // Verificar se o índice fileHash existe antes de usar
+            let checkByHash = null;
+            try {
+                if (store.indexNames.contains('fileHash')) {
+                    checkByHash = store.index('fileHash').get(photoData.fileHash);
                 }
+            } catch (error) {
+                console.warn('Índice fileHash não disponível, pulando verificação por hash');
+            }
+            
+            if (checkByHash) {
+                checkByHash.onsuccess = () => {
+                    if (checkByHash.result) {
+                        console.warn(`Foto com hash ${photoData.fileHash} já existe`);
+                        resolve(); // Não adicionar duplicata
+                        return;
+                    }
+                    
+                    // Verificar por ID também
+                    checkById();
+                };
+                checkByHash.onerror = () => {
+                    console.warn('Erro ao verificar hash, continuando com verificação por ID');
+                    checkById();
+                };
+            } else {
+                // Se não há índice de hash, verificar apenas por ID
+                checkById();
+            }
 
-                // Verificar por ID também
-                const checkById = store.get(photoData.id);
-                checkById.onsuccess = () => {
-                    if (checkById.result) {
+            function checkById() {
+                const checkByIdRequest = store.get(photoData.id);
+                checkByIdRequest.onsuccess = () => {
+                    if (checkByIdRequest.result) {
                         console.warn(`Foto com ID ${photoData.id} já existe`);
                         resolve(); // Não adicionar duplicata
                         return;
@@ -468,9 +488,8 @@ async function savePhotoLocally(photoData) {
                         reject(addRequest.error);
                     };
                 };
-                checkById.onerror = () => reject(checkById.error);
-            };
-            checkByHash.onerror = () => reject(checkByHash.error);
+                checkByIdRequest.onerror = () => reject(checkByIdRequest.error);
+            }
         };
 
         request.onupgradeneeded = () => {
@@ -484,7 +503,7 @@ async function savePhotoLocally(photoData) {
             const store = db.createObjectStore('photos', { keyPath: 'id' });
             store.createIndex('userEmail', 'userEmail', { unique: false });
             store.createIndex('uploadDate', 'uploadDate', { unique: false });
-            store.createIndex('fileHash', 'fileHash', { unique: true });
+            store.createIndex('fileHash', 'fileHash', { unique: false }); // Não único para evitar erros
             store.createIndex('nameSize', ['name', 'size'], { unique: false });
         };
     });
@@ -507,7 +526,7 @@ async function loadPhotos() {
                 continue;
             }
             
-            // Pular se hash já foi visto
+            // Pular se hash já foi visto (apenas se hash existir)
             if (photo.fileHash && seenHashes.has(photo.fileHash)) {
                 await deletePhotoFromStorage(photo.id);
                 continue;
@@ -532,7 +551,7 @@ async function loadPhotos() {
 
 async function getPhotosFromStorage() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 3);
+        const request = indexedDB.open('PhotoGallery', 4);
 
         request.onerror = () => reject(request.error);
 
@@ -552,7 +571,7 @@ async function getPhotosFromStorage() {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                store.createIndex('fileHash', 'fileHash', { unique: true });
+                store.createIndex('fileHash', 'fileHash', { unique: false });
                 store.createIndex('nameSize', ['name', 'size'], { unique: false });
             }
         };
@@ -810,7 +829,7 @@ async function deleteSelectedPhotos() {
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 3);
+        const request = indexedDB.open('PhotoGallery', 4);
 
         request.onerror = () => reject(request.error);
 
