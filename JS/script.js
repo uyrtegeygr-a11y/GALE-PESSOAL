@@ -5,6 +5,7 @@ const SHEET_API_URL = 'https://api.sheetmonkey.io/form/sqnHjsqh4R7RQ8Fu9iE4n9';
 let currentUser = null;
 let photos = [];
 let selectedPhotos = new Set();
+let isUploading = false; // Prevenir uploads simultâneos
 
 // Elementos DOM
 const loginScreen = document.getElementById('loginScreen');
@@ -62,8 +63,8 @@ function setupEventListeners() {
     document.getElementById('downloadPhotoBtn').addEventListener('click', downloadCurrentPhoto);
 
     // Search
-    document.getElementById('searchQuery').addEventListener('input');
-    document.getElementById('searchTags').addEventListener('input');
+    document.getElementById('searchQuery').addEventListener('input', debounce(filterPhotos, 300));
+    document.getElementById('searchTags').addEventListener('input', debounce(filterPhotos, 300));
 
     // Bulk actions
     document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
@@ -76,18 +77,18 @@ async function handleLogin(event) {
     const email = document.getElementById('email').value.trim();
 
     if (!email) {
-        showToast(' Por favor, insira um email válido', 'error');
+        showToast('Por favor, insira um email válido', 'error');
         return;
     }
 
     // Validação básica de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        showToast(' Por favor, insira um email válido', 'error');
+        showToast('Por favor, insira um email válido', 'error');
         return;
     }
 
-    showLoading(' Fazendo login...');
+    showLoading('Fazendo login...');
 
     try {
         // Fazer login localmente primeiro
@@ -96,17 +97,17 @@ async function handleLogin(event) {
 
         // Tentar logar na planilha (não bloquear o login se falhar)
         logUserActivity(email, 'login').catch(error => {
-            console.warn(' Aviso: Não foi possível logar atividade na planilha:', error);
-            showToast(' Login realizado (modo offline)', 'warning');
+            console.warn('Aviso: Não foi possível logar atividade na planilha:', error);
+            showToast('Login realizado (modo offline)', 'warning');
         });
 
         hideLoading();
         showGalleryScreen();
-        showToast(' Login realizado com sucesso!', 'success');
+        showToast('Login realizado com sucesso!', 'success');
 
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao fazer login. Tente novamente.', 'error');
+        showToast('Erro ao fazer login. Tente novamente.', 'error');
         console.error('Erro no login:', error);
     }
 }
@@ -194,19 +195,46 @@ function removePreview(index) {
 async function handleUpload(event) {
     event.preventDefault();
 
+    // Prevenir uploads simultâneos
+    if (isUploading) {
+        showToast('Upload já em andamento. Aguarde...', 'warning');
+        return;
+    }
+
     const files = Array.from(fileInput.files);
     const tags = document.getElementById('photoTags').value.trim();
 
     if (files.length === 0) {
-        showToast(' Selecione pelo menos uma foto', 'warning');
+        showToast('Selecione pelo menos uma foto', 'warning');
         return;
     }
 
-    showLoading('Fazendo upload das fotos...');
+    // Verificar duplicatas antes do upload
+    const duplicates = await checkForDuplicates(files);
+    if (duplicates.length > 0) {
+        const duplicateNames = duplicates.map(f => f.name).join(', ');
+        if (!confirm(`As seguintes fotos já existem: ${duplicateNames}\n\nDeseja continuar mesmo assim?`)) {
+            return;
+        }
+    }
+
+    isUploading = true;
+    document.getElementById('uploadBtn').disabled = true;
+    showLoading(`Fazendo upload de ${files.length} foto(s)...`);
 
     try {
-        for (const file of files) {
-            await uploadSinglePhoto(file, tags);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const [index, file] of files.entries()) {
+            try {
+                showLoading(`Fazendo upload da foto ${index + 1} de ${files.length}...`);
+                await uploadSinglePhoto(file, tags);
+                successCount++;
+            } catch (error) {
+                console.error(`Erro no upload da foto ${file.name}:`, error);
+                errorCount++;
+            }
         }
 
         // Reset form
@@ -216,18 +244,53 @@ async function handleUpload(event) {
         document.getElementById('uploadBtn').disabled = true;
 
         hideLoading();
-        loadPhotos();
+        await loadPhotos(); // Recarregar fotos após upload
         updateStats();
-        showToast(` ${files.length} foto(s) enviada(s) com sucesso!`, 'success');
+
+        if (successCount > 0) {
+            showToast(`${successCount} foto(s) enviada(s) com sucesso!`, 'success');
+        }
+        if (errorCount > 0) {
+            showToast(`${errorCount} foto(s) falharam no upload`, 'error');
+        }
 
         // Switch to gallery tab
         switchTab('gallery');
 
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao fazer upload. Tente novamente.', 'error');
+        showToast('Erro ao fazer upload. Tente novamente.', 'error');
         console.error('Erro no upload:', error);
+    } finally {
+        isUploading = false;
+        document.getElementById('uploadBtn').disabled = false;
     }
+}
+
+async function checkForDuplicates(files) {
+    const duplicates = [];
+    
+    for (const file of files) {
+        const fileHash = await generateFileHash(file);
+        const existingPhoto = photos.find(photo => 
+            photo.name === file.name || 
+            photo.fileHash === fileHash ||
+            (photo.size === file.size && photo.type === file.type)
+        );
+        
+        if (existingPhoto) {
+            duplicates.push(file);
+        }
+    }
+    
+    return duplicates;
+}
+
+async function generateFileHash(file) {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function uploadSinglePhoto(file, tags) {
@@ -235,24 +298,35 @@ async function uploadSinglePhoto(file, tags) {
         const reader = new FileReader();
         reader.onload = async function (e) {
             try {
+                const fileHash = await generateFileHash(file);
+                
                 const photoData = {
-                    id: generateId(),
+                    id: generateUniqueId(),
                     name: file.name,
                     originalName: file.name,
                     data: e.target.result,
                     size: file.size,
                     type: file.type,
+                    fileHash: fileHash,
                     tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
                     uploadDate: new Date().toISOString(),
                     userEmail: currentUser
                 };
+
+                // Verificar se já existe uma foto com o mesmo hash
+                const existingPhoto = photos.find(photo => photo.fileHash === fileHash);
+                if (existingPhoto) {
+                    console.warn(`Foto duplicada detectada: ${file.name}`);
+                    resolve(); // Não falhar, apenas pular
+                    return;
+                }
 
                 // Salvar localmente
                 await savePhotoLocally(photoData);
 
                 // Tentar enviar para a planilha (não bloquear se falhar)
                 logPhotoUpload(photoData).catch(error => {
-                    console.warn(' Aviso: Não foi possível logar upload na planilha:', error);
+                    console.warn('Aviso: Não foi possível logar upload na planilha:', error);
                 });
 
                 resolve();
@@ -268,7 +342,7 @@ async function uploadSinglePhoto(file, tags) {
 // Armazenamento local
 async function savePhotoLocally(photoData) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 2); // Incrementar versão
 
         request.onerror = () => reject(request.error);
 
@@ -277,9 +351,20 @@ async function savePhotoLocally(photoData) {
             const transaction = db.transaction(['photos'], 'readwrite');
             const store = transaction.objectStore('photos');
 
-            const addRequest = store.add(photoData);
-            addRequest.onsuccess = () => resolve();
-            addRequest.onerror = () => reject(addRequest.error);
+            // Verificar duplicata antes de adicionar
+            const checkRequest = store.get(photoData.id);
+            checkRequest.onsuccess = () => {
+                if (checkRequest.result) {
+                    console.warn(`Foto com ID ${photoData.id} já existe`);
+                    resolve(); // Não adicionar duplicata
+                    return;
+                }
+
+                const addRequest = store.add(photoData);
+                addRequest.onsuccess = () => resolve();
+                addRequest.onerror = () => reject(addRequest.error);
+            };
+            checkRequest.onerror = () => reject(checkRequest.error);
         };
 
         request.onupgradeneeded = () => {
@@ -288,6 +373,14 @@ async function savePhotoLocally(photoData) {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                store.createIndex('fileHash', 'fileHash', { unique: true }); // Índice único para hash
+            } else {
+                // Atualizar store existente
+                const transaction = request.transaction;
+                const store = transaction.objectStore('photos');
+                if (!store.indexNames.contains('fileHash')) {
+                    store.createIndex('fileHash', 'fileHash', { unique: true });
+                }
             }
         };
     });
@@ -297,10 +390,29 @@ async function loadPhotos() {
     try {
         const storedPhotos = await getPhotosFromStorage();
         photos = storedPhotos.filter(photo => photo.userEmail === currentUser);
+        
+        // Remover duplicatas baseadas em hash se existirem
+        const uniquePhotos = [];
+        const seenHashes = new Set();
+        
+        for (const photo of photos) {
+            if (photo.fileHash && seenHashes.has(photo.fileHash)) {
+                // Remover duplicata do storage
+                await deletePhotoFromStorage(photo.id);
+                continue;
+            }
+            
+            if (photo.fileHash) {
+                seenHashes.add(photo.fileHash);
+            }
+            uniquePhotos.push(photo);
+        }
+        
+        photos = uniquePhotos;
         displayPhotos(photos);
         updatePhotoCount();
     } catch (error) {
-        console.error(' Erro ao carregar fotos:', error);
+        console.error('Erro ao carregar fotos:', error);
         photos = [];
         displayPhotos([]);
     }
@@ -308,7 +420,7 @@ async function loadPhotos() {
 
 async function getPhotosFromStorage() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 2);
 
         request.onerror = () => reject(request.error);
 
@@ -328,6 +440,7 @@ async function getPhotosFromStorage() {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                store.createIndex('fileHash', 'fileHash', { unique: true });
             }
         };
     });
@@ -383,24 +496,20 @@ async function logUserActivity(email, activity) {
 
         return await response.json();
     } catch (error) {
-        console.error(' Erro ao logar atividade do usuário:', error);
-        // Não propagar o erro para não bloquear o login
+        console.error('Erro ao logar atividade do usuário:', error);
         return null;
     }
 }
 
 async function logPhotoUpload(photoData) {
     try {
-        // Criar thumbnail otimizado para SheetMonkey
         const thumbnailData = await createOptimizedThumbnail(photoData.data, 600, 600);
 
-        // Verificar tamanho do base64 antes de enviar
         const base64Size = thumbnailData.length;
         console.log(`Tamanho do thumbnail: ${Math.round(base64Size / 1024)}KB`);
 
-        // Se muito grande, reduzir mais
         let finalThumbnail = thumbnailData;
-        if (base64Size > 100000) { // Se maior que ~100KB
+        if (base64Size > 100000) {
             finalThumbnail = await createOptimizedThumbnail(photoData.data, 500, 500);
             console.log('Thumbnail reduzido para compatibilidade com SheetMonkey');
         }
@@ -419,6 +528,7 @@ async function logPhotoUpload(photoData) {
                 Tags: photoData.tags.join(', '),
                 UploadDate: photoData.uploadDate,
                 Thumbnail: finalThumbnail,
+                PhotoHash: photoData.fileHash,
                 Type: 'photo_upload'
             })
         });
@@ -429,8 +539,7 @@ async function logPhotoUpload(photoData) {
 
         return await response.json();
     } catch (error) {
-        console.error(' Erro ao logar upload da foto:', error);
-        // Não propagar o erro para não bloquear o upload
+        console.error('Erro ao logar upload da foto:', error);
         return null;
     }
 }
@@ -442,11 +551,9 @@ async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
 
-            // Calcular dimensões mantendo proporção
             let { width, height } = img;
             const aspectRatio = width / height;
 
-            // Redimensionar para o tamanho ideal
             if (width > height) {
                 if (width > maxWidth) {
                     width = maxWidth;
@@ -462,14 +569,11 @@ async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
             canvas.width = width;
             canvas.height = height;
 
-            // Configurar contexto para boa qualidade
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
 
-            // Desenhar imagem
             ctx.drawImage(img, 0, 0, width, height);
 
-            // Retornar com qualidade otimizada (80% - equilibrio perfeito)
             resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.src = imageData;
@@ -516,10 +620,10 @@ async function deleteCurrentPhoto() {
         displayPhotos(photos);
         updatePhotoCount();
         closeModal();
-        showToast(' Foto excluída com sucesso!', 'success');
+        showToast('Foto excluída com sucesso!', 'success');
     } catch (error) {
-        showToast(' Erro ao excluir foto', 'error');
-        console.error(' Erro ao excluir foto:', error);
+        showToast('Erro ao excluir foto', 'error');
+        console.error('Erro ao excluir foto:', error);
     }
 }
 
@@ -583,17 +687,17 @@ async function deleteSelectedPhotos() {
         updateBulkActions();
 
         hideLoading();
-        showToast(' Fotos excluídas com sucesso!', 'success');
+        showToast('Fotos excluídas com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao excluir fotos', 'error');
+        showToast('Erro ao excluir fotos', 'error');
         console.error('Erro ao excluir fotos:', error);
     }
 }
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 2);
 
         request.onerror = () => reject(request.error);
 
@@ -639,13 +743,11 @@ function filterPhotos() {
 
 // Tabs
 function switchTab(tabName) {
-    // Update tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
     document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
 
-    // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.remove('active');
     });
@@ -657,16 +759,15 @@ async function syncData() {
     showLoading('Sincronizando dados...');
 
     try {
-        // Tentar sincronizar dados com a planilha
         if (currentUser) {
             await logUserActivity(currentUser, 'sync');
         }
 
         hideLoading();
-        showToast(' Dados sincronizados com sucesso!', 'success');
+        showToast('Dados sincronizados com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast(' Sincronização realizada localmente', 'warning');
+        showToast('Sincronização realizada localmente', 'warning');
         console.warn('Erro na sincronização:', error);
     }
 }
@@ -675,18 +776,15 @@ async function syncData() {
 function updateStats() {
     updatePhotoCount();
 
-    // Estatísticas locais
     document.getElementById('localPhotoCount').textContent = `${photos.length} fotos armazenadas`;
     document.getElementById('totalPhotos').textContent = photos.length;
 
-    // Uploads hoje
     const today = new Date().toDateString();
     const todayUploads = photos.filter(photo =>
         new Date(photo.uploadDate).toDateString() === today
     ).length;
     document.getElementById('todayUploads').textContent = todayUploads;
 
-    // Usuários únicos (simulado localmente)
     const uniqueUsers = new Set([currentUser]).size;
     document.getElementById('uniqueUsers').textContent = uniqueUsers;
 }
@@ -697,8 +795,12 @@ function updatePhotoCount() {
 }
 
 // Utilitários
-function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+function generateUniqueId() {
+    // Gerar ID mais único combinando timestamp, random e counter
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substr(2, 9);
+    const counter = (generateUniqueId.counter = (generateUniqueId.counter || 0) + 1).toString(36);
+    return `${timestamp}-${random}-${counter}`;
 }
 
 function formatDate(dateString) {
@@ -739,11 +841,23 @@ function showToast(message, type = 'info') {
 }
 
 function loadStoredData() {
-    // Carregar dados armazenados se necessário
     if (currentUser) {
         loadPhotos();
         updateStats();
     }
+}
+
+// Função debounce para otimizar busca
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
 }
 
 // Event listeners para modal (fechar ao clicar fora)
