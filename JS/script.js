@@ -5,9 +5,6 @@ const SHEET_API_URL = 'https://api.sheetmonkey.io/form/sqnHjsqh4R7RQ8Fu9iE4n9';
 let currentUser = null;
 let photos = [];
 let selectedPhotos = new Set();
-let isUploading = false; // Prevenir uploads simultâneos
-let uploadQueue = new Set(); // Rastrear arquivos em upload
-let processingFiles = new Map(); // Rastrear arquivos sendo processados
 
 // Elementos DOM
 const loginScreen = document.getElementById('loginScreen');
@@ -43,14 +40,9 @@ function setupEventListeners() {
     // Login
     loginForm.addEventListener('submit', handleLogin);
 
-    // Upload - usar apenas um listener para evitar duplicação
-    uploadForm.removeEventListener('submit', handleUpload); // Remove listener existente se houver
+    // Upload
     uploadForm.addEventListener('submit', handleUpload);
-    
-    // File input - prevenir múltiplos eventos
-    fileInput.removeEventListener('change', handleFileSelect);
     fileInput.addEventListener('change', handleFileSelect);
-    
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', handleDragOver);
     dropZone.addEventListener('drop', handleDrop);
@@ -70,8 +62,8 @@ function setupEventListeners() {
     document.getElementById('downloadPhotoBtn').addEventListener('click', downloadCurrentPhoto);
 
     // Search
-    document.getElementById('searchQuery').addEventListener('input', debounce(filterPhotos, 300));
-    document.getElementById('searchTags').addEventListener('input', debounce(filterPhotos, 300));
+    document.getElementById('searchQuery').addEventListener('input');
+    document.getElementById('searchTags').addEventListener('input');
 
     // Bulk actions
     document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
@@ -84,18 +76,18 @@ async function handleLogin(event) {
     const email = document.getElementById('email').value.trim();
 
     if (!email) {
-        showToast('Por favor, insira um email válido', 'error');
+        showToast(' Por favor, insira um email válido', 'error');
         return;
     }
 
     // Validação básica de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        showToast('Por favor, insira um email válido', 'error');
+        showToast(' Por favor, insira um email válido', 'error');
         return;
     }
 
-    showLoading('Fazendo login...');
+    showLoading(' Fazendo login...');
 
     try {
         // Fazer login localmente primeiro
@@ -104,17 +96,17 @@ async function handleLogin(event) {
 
         // Tentar logar na planilha (não bloquear o login se falhar)
         logUserActivity(email, 'login').catch(error => {
-            console.warn('Aviso: Não foi possível logar atividade na planilha:', error);
-            showToast('Login realizado (modo offline)', 'warning');
+            console.warn(' Aviso: Não foi possível logar atividade na planilha:', error);
+            showToast(' Login realizado (modo offline)', 'warning');
         });
 
         hideLoading();
         showGalleryScreen();
-        showToast('Login realizado com sucesso!', 'success');
+        showToast(' Login realizado com sucesso!', 'success');
 
     } catch (error) {
         hideLoading();
-        showToast('Erro ao fazer login. Tente novamente.', 'error');
+        showToast(' Erro ao fazer login. Tente novamente.', 'error');
         console.error('Erro no login:', error);
     }
 }
@@ -135,39 +127,12 @@ function handleLogout() {
     document.getElementById('email').value = '';
     photos = [];
     selectedPhotos.clear();
-    // Limpar filas de upload
-    uploadQueue.clear();
-    processingFiles.clear();
-    isUploading = false;
 }
 
-// Upload de fotos - versão melhorada
+// Upload de fotos
 function handleFileSelect(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    // Prevenir processamento múltiplo do mesmo evento
-    if (event.target.dataset.processing === 'true') {
-        return;
-    }
-    
-    event.target.dataset.processing = 'true';
-    
-    setTimeout(() => {
-        event.target.dataset.processing = 'false';
-    }, 1000);
-    
     const files = Array.from(event.target.files);
-    console.log(`Arquivos selecionados: ${files.length}`);
-    
-    // Filtrar apenas arquivos de imagem
-    const imageFiles = files.filter(file => file.type.startsWith('image/'));
-    
-    if (imageFiles.length !== files.length) {
-        showToast(`${files.length - imageFiles.length} arquivo(s) ignorado(s) (apenas imagens são aceitas)`, 'warning');
-    }
-    
-    displayPreview(imageFiles);
+    displayPreview(files);
 }
 
 function handleDragOver(event) {
@@ -228,85 +193,20 @@ function removePreview(index) {
 
 async function handleUpload(event) {
     event.preventDefault();
-    event.stopPropagation();
-
-    // Prevenir uploads simultâneos
-    if (isUploading) {
-        showToast('Upload já em andamento. Aguarde...', 'warning');
-        return;
-    }
 
     const files = Array.from(fileInput.files);
     const tags = document.getElementById('photoTags').value.trim();
 
     if (files.length === 0) {
-        showToast('Selecione pelo menos uma foto', 'warning');
+        showToast(' Selecione pelo menos uma foto', 'warning');
         return;
     }
 
-    // Verificar se algum arquivo já está sendo processado
-    const alreadyProcessing = files.some(file => {
-        const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-        return processingFiles.has(fileKey);
-    });
-
-    if (alreadyProcessing) {
-        showToast('Alguns arquivos já estão sendo processados. Aguarde...', 'warning');
-        return;
-    }
-
-    // Marcar arquivos como sendo processados
-    files.forEach(file => {
-        const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-        processingFiles.set(fileKey, true);
-    });
-
-    // Verificar duplicatas antes do upload
-    const duplicates = await checkForDuplicates(files);
-    if (duplicates.length > 0) {
-        const duplicateNames = duplicates.map(f => f.name).join(', ');
-        if (!confirm(`As seguintes fotos já existem: ${duplicateNames}\n\nDeseja continuar mesmo assim?`)) {
-            // Limpar arquivos do processamento se cancelado
-            files.forEach(file => {
-                const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-                processingFiles.delete(fileKey);
-            });
-            return;
-        }
-    }
-
-    isUploading = true;
-    document.getElementById('uploadBtn').disabled = true;
-    showLoading(`Fazendo upload de ${files.length} foto(s)...`);
+    showLoading('Fazendo upload das fotos...');
 
     try {
-        let successCount = 0;
-        let errorCount = 0;
-
-        // Processar arquivos sequencialmente para evitar problemas de concorrência
-        for (const [index, file] of files.entries()) {
-            const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-            
-            try {
-                showLoading(`Fazendo upload da foto ${index + 1} de ${files.length}...`);
-                
-                // Verificar novamente se não foi processado por outro processo
-                if (uploadQueue.has(fileKey)) {
-                    console.warn(`Arquivo ${file.name} já está na fila de upload`);
-                    continue;
-                }
-                
-                uploadQueue.add(fileKey);
-                await uploadSinglePhoto(file, tags);
-                successCount++;
-                
-            } catch (error) {
-                console.error(`Erro no upload da foto ${file.name}:`, error);
-                errorCount++;
-            } finally {
-                uploadQueue.delete(fileKey);
-                processingFiles.delete(fileKey);
-            }
+        for (const file of files) {
+            await uploadSinglePhoto(file, tags);
         }
 
         // Reset form
@@ -316,67 +216,17 @@ async function handleUpload(event) {
         document.getElementById('uploadBtn').disabled = true;
 
         hideLoading();
-        
-        // Aguardar um pouco antes de recarregar para garantir que todos os uploads foram processados
-        await new Promise(resolve => setTimeout(resolve, 500));
-        await loadPhotos(); // Recarregar fotos após upload
+        loadPhotos();
         updateStats();
-
-        if (successCount > 0) {
-            showToast(`${successCount} foto(s) enviada(s) com sucesso!`, 'success');
-        }
-        if (errorCount > 0) {
-            showToast(`${errorCount} foto(s) falharam no upload`, 'error');
-        }
+        showToast(` ${files.length} foto(s) enviada(s) com sucesso!`, 'success');
 
         // Switch to gallery tab
         switchTab('gallery');
 
     } catch (error) {
         hideLoading();
-        showToast('Erro ao fazer upload. Tente novamente.', 'error');
+        showToast(' Erro ao fazer upload. Tente novamente.', 'error');
         console.error('Erro no upload:', error);
-    } finally {
-        isUploading = false;
-        document.getElementById('uploadBtn').disabled = false;
-        
-        // Limpar todas as filas
-        uploadQueue.clear();
-        files.forEach(file => {
-            const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-            processingFiles.delete(fileKey);
-        });
-    }
-}
-
-async function checkForDuplicates(files) {
-    const duplicates = [];
-    
-    for (const file of files) {
-        const fileHash = await generateFileHash(file);
-        const existingPhoto = photos.find(photo => 
-            photo.fileHash === fileHash ||
-            (photo.name === file.name && photo.size === file.size && 
-             Math.abs(new Date(photo.uploadDate).getTime() - Date.now()) < 60000) // Dentro de 1 minuto
-        );
-        
-        if (existingPhoto) {
-            duplicates.push(file);
-        }
-    }
-    
-    return duplicates;
-}
-
-async function generateFileHash(file) {
-    try {
-        const buffer = await file.arrayBuffer();
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    } catch (error) {
-        // Fallback: usar nome, tamanho e data como identificador
-        return `${file.name}-${file.size}-${file.lastModified}`;
     }
 }
 
@@ -385,35 +235,24 @@ async function uploadSinglePhoto(file, tags) {
         const reader = new FileReader();
         reader.onload = async function (e) {
             try {
-                const fileHash = await generateFileHash(file);
-                
-                // Verificar duplicata por hash antes de processar
-                const existingPhoto = photos.find(photo => photo.fileHash === fileHash);
-                if (existingPhoto) {
-                    console.warn(`Foto duplicada detectada: ${file.name} (hash: ${fileHash})`);
-                    resolve(); // Não falhar, apenas pular
-                    return;
-                }
-                
                 const photoData = {
-                    id: generateUniqueId(),
+                    id: generateId(),
                     name: file.name,
                     originalName: file.name,
                     data: e.target.result,
                     size: file.size,
                     type: file.type,
-                    fileHash: fileHash,
                     tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
                     uploadDate: new Date().toISOString(),
                     userEmail: currentUser
                 };
 
-                // Salvar localmente com verificação adicional
+                // Salvar localmente
                 await savePhotoLocally(photoData);
 
                 // Tentar enviar para a planilha (não bloquear se falhar)
                 logPhotoUpload(photoData).catch(error => {
-                    console.warn('Aviso: Não foi possível logar upload na planilha:', error);
+                    console.warn(' Aviso: Não foi possível logar upload na planilha:', error);
                 });
 
                 resolve();
@@ -426,10 +265,10 @@ async function uploadSinglePhoto(file, tags) {
     });
 }
 
-// Armazenamento local - versão melhorada com compatibilidade
+// Armazenamento local
 async function savePhotoLocally(photoData) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4); // Incrementar versão
+        const request = indexedDB.open('PhotoGallery', 1);
 
         request.onerror = () => reject(request.error);
 
@@ -438,73 +277,18 @@ async function savePhotoLocally(photoData) {
             const transaction = db.transaction(['photos'], 'readwrite');
             const store = transaction.objectStore('photos');
 
-            // Verificar se o índice fileHash existe antes de usar
-            let checkByHash = null;
-            try {
-                if (store.indexNames.contains('fileHash')) {
-                    checkByHash = store.index('fileHash').get(photoData.fileHash);
-                }
-            } catch (error) {
-                console.warn('Índice fileHash não disponível, pulando verificação por hash');
-            }
-            
-            if (checkByHash) {
-                checkByHash.onsuccess = () => {
-                    if (checkByHash.result) {
-                        console.warn(`Foto com hash ${photoData.fileHash} já existe`);
-                        resolve(); // Não adicionar duplicata
-                        return;
-                    }
-                    
-                    // Verificar por ID também
-                    checkById();
-                };
-                checkByHash.onerror = () => {
-                    console.warn('Erro ao verificar hash, continuando com verificação por ID');
-                    checkById();
-                };
-            } else {
-                // Se não há índice de hash, verificar apenas por ID
-                checkById();
-            }
-
-            function checkById() {
-                const checkByIdRequest = store.get(photoData.id);
-                checkByIdRequest.onsuccess = () => {
-                    if (checkByIdRequest.result) {
-                        console.warn(`Foto com ID ${photoData.id} já existe`);
-                        resolve(); // Não adicionar duplicata
-                        return;
-                    }
-
-                    // Adicionar foto se não existir
-                    const addRequest = store.add(photoData);
-                    addRequest.onsuccess = () => {
-                        console.log(`Foto salva localmente: ${photoData.name}`);
-                        resolve();
-                    };
-                    addRequest.onerror = () => {
-                        console.error('Erro ao adicionar foto:', addRequest.error);
-                        reject(addRequest.error);
-                    };
-                };
-                checkByIdRequest.onerror = () => reject(checkByIdRequest.error);
-            }
+            const addRequest = store.add(photoData);
+            addRequest.onsuccess = () => resolve();
+            addRequest.onerror = () => reject(addRequest.error);
         };
 
         request.onupgradeneeded = () => {
             const db = request.result;
-            
-            // Remover store antigo se existir para recriar com nova estrutura
-            if (db.objectStoreNames.contains('photos')) {
-                db.deleteObjectStore('photos');
+            if (!db.objectStoreNames.contains('photos')) {
+                const store = db.createObjectStore('photos', { keyPath: 'id' });
+                store.createIndex('userEmail', 'userEmail', { unique: false });
+                store.createIndex('uploadDate', 'uploadDate', { unique: false });
             }
-            
-            const store = db.createObjectStore('photos', { keyPath: 'id' });
-            store.createIndex('userEmail', 'userEmail', { unique: false });
-            store.createIndex('uploadDate', 'uploadDate', { unique: false });
-            store.createIndex('fileHash', 'fileHash', { unique: false }); // Não único para evitar erros
-            store.createIndex('nameSize', ['name', 'size'], { unique: false });
         };
     });
 }
@@ -513,37 +297,10 @@ async function loadPhotos() {
     try {
         const storedPhotos = await getPhotosFromStorage();
         photos = storedPhotos.filter(photo => photo.userEmail === currentUser);
-        
-        // Remover duplicatas baseadas em hash se existirem
-        const uniquePhotos = [];
-        const seenHashes = new Set();
-        const seenIds = new Set();
-        
-        for (const photo of photos) {
-            // Pular se ID já foi visto
-            if (seenIds.has(photo.id)) {
-                await deletePhotoFromStorage(photo.id);
-                continue;
-            }
-            
-            // Pular se hash já foi visto (apenas se hash existir)
-            if (photo.fileHash && seenHashes.has(photo.fileHash)) {
-                await deletePhotoFromStorage(photo.id);
-                continue;
-            }
-            
-            seenIds.add(photo.id);
-            if (photo.fileHash) {
-                seenHashes.add(photo.fileHash);
-            }
-            uniquePhotos.push(photo);
-        }
-        
-        photos = uniquePhotos;
         displayPhotos(photos);
         updatePhotoCount();
     } catch (error) {
-        console.error('Erro ao carregar fotos:', error);
+        console.error(' Erro ao carregar fotos:', error);
         photos = [];
         displayPhotos([]);
     }
@@ -551,7 +308,7 @@ async function loadPhotos() {
 
 async function getPhotosFromStorage() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4);
+        const request = indexedDB.open('PhotoGallery', 1);
 
         request.onerror = () => reject(request.error);
 
@@ -571,8 +328,6 @@ async function getPhotosFromStorage() {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                store.createIndex('fileHash', 'fileHash', { unique: false });
-                store.createIndex('nameSize', ['name', 'size'], { unique: false });
             }
         };
     });
@@ -628,20 +383,24 @@ async function logUserActivity(email, activity) {
 
         return await response.json();
     } catch (error) {
-        console.error('Erro ao logar atividade do usuário:', error);
+        console.error(' Erro ao logar atividade do usuário:', error);
+        // Não propagar o erro para não bloquear o login
         return null;
     }
 }
 
 async function logPhotoUpload(photoData) {
     try {
+        // Criar thumbnail otimizado para SheetMonkey
         const thumbnailData = await createOptimizedThumbnail(photoData.data, 600, 600);
 
+        // Verificar tamanho do base64 antes de enviar
         const base64Size = thumbnailData.length;
         console.log(`Tamanho do thumbnail: ${Math.round(base64Size / 1024)}KB`);
 
+        // Se muito grande, reduzir mais
         let finalThumbnail = thumbnailData;
-        if (base64Size > 100000) {
+        if (base64Size > 100000) { // Se maior que ~100KB
             finalThumbnail = await createOptimizedThumbnail(photoData.data, 500, 500);
             console.log('Thumbnail reduzido para compatibilidade com SheetMonkey');
         }
@@ -660,7 +419,6 @@ async function logPhotoUpload(photoData) {
                 Tags: photoData.tags.join(', '),
                 UploadDate: photoData.uploadDate,
                 Thumbnail: finalThumbnail,
-                PhotoHash: photoData.fileHash,
                 Type: 'photo_upload'
             })
         });
@@ -671,7 +429,8 @@ async function logPhotoUpload(photoData) {
 
         return await response.json();
     } catch (error) {
-        console.error('Erro ao logar upload da foto:', error);
+        console.error(' Erro ao logar upload da foto:', error);
+        // Não propagar o erro para não bloquear o upload
         return null;
     }
 }
@@ -683,9 +442,11 @@ async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
 
+            // Calcular dimensões mantendo proporção
             let { width, height } = img;
             const aspectRatio = width / height;
 
+            // Redimensionar para o tamanho ideal
             if (width > height) {
                 if (width > maxWidth) {
                     width = maxWidth;
@@ -701,11 +462,14 @@ async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
             canvas.width = width;
             canvas.height = height;
 
+            // Configurar contexto para boa qualidade
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
 
+            // Desenhar imagem
             ctx.drawImage(img, 0, 0, width, height);
 
+            // Retornar com qualidade otimizada (80% - equilibrio perfeito)
             resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.src = imageData;
@@ -752,10 +516,10 @@ async function deleteCurrentPhoto() {
         displayPhotos(photos);
         updatePhotoCount();
         closeModal();
-        showToast('Foto excluída com sucesso!', 'success');
+        showToast(' Foto excluída com sucesso!', 'success');
     } catch (error) {
-        showToast('Erro ao excluir foto', 'error');
-        console.error('Erro ao excluir foto:', error);
+        showToast(' Erro ao excluir foto', 'error');
+        console.error(' Erro ao excluir foto:', error);
     }
 }
 
@@ -819,17 +583,17 @@ async function deleteSelectedPhotos() {
         updateBulkActions();
 
         hideLoading();
-        showToast('Fotos excluídas com sucesso!', 'success');
+        showToast(' Fotos excluídas com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast('Erro ao excluir fotos', 'error');
+        showToast(' Erro ao excluir fotos', 'error');
         console.error('Erro ao excluir fotos:', error);
     }
 }
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4);
+        const request = indexedDB.open('PhotoGallery', 1);
 
         request.onerror = () => reject(request.error);
 
@@ -875,11 +639,13 @@ function filterPhotos() {
 
 // Tabs
 function switchTab(tabName) {
+    // Update tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
     document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
 
+    // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.remove('active');
     });
@@ -891,15 +657,16 @@ async function syncData() {
     showLoading('Sincronizando dados...');
 
     try {
+        // Tentar sincronizar dados com a planilha
         if (currentUser) {
             await logUserActivity(currentUser, 'sync');
         }
 
         hideLoading();
-        showToast('Dados sincronizados com sucesso!', 'success');
+        showToast(' Dados sincronizados com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast('Sincronização realizada localmente', 'warning');
+        showToast(' Sincronização realizada localmente', 'warning');
         console.warn('Erro na sincronização:', error);
     }
 }
@@ -908,15 +675,18 @@ async function syncData() {
 function updateStats() {
     updatePhotoCount();
 
+    // Estatísticas locais
     document.getElementById('localPhotoCount').textContent = `${photos.length} fotos armazenadas`;
     document.getElementById('totalPhotos').textContent = photos.length;
 
+    // Uploads hoje
     const today = new Date().toDateString();
     const todayUploads = photos.filter(photo =>
         new Date(photo.uploadDate).toDateString() === today
     ).length;
     document.getElementById('todayUploads').textContent = todayUploads;
 
+    // Usuários únicos (simulado localmente)
     const uniqueUsers = new Set([currentUser]).size;
     document.getElementById('uniqueUsers').textContent = uniqueUsers;
 }
@@ -927,13 +697,8 @@ function updatePhotoCount() {
 }
 
 // Utilitários
-function generateUniqueId() {
-    // Gerar ID mais único combinando timestamp, random e counter
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substr(2, 9);
-    const counter = (generateUniqueId.counter = (generateUniqueId.counter || 0) + 1).toString(36);
-    const userPrefix = currentUser ? currentUser.substring(0, 3) : 'usr';
-    return `${userPrefix}-${timestamp}-${random}-${counter}`;
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
 function formatDate(dateString) {
@@ -974,23 +739,11 @@ function showToast(message, type = 'info') {
 }
 
 function loadStoredData() {
+    // Carregar dados armazenados se necessário
     if (currentUser) {
         loadPhotos();
         updateStats();
     }
-}
-
-// Função debounce para otimizar busca
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
 }
 
 // Event listeners para modal (fechar ao clicar fora)
@@ -1013,3 +766,5 @@ document.addEventListener('keydown', function (event) {
 window.removePreview = removePreview;
 window.openPhotoModal = openPhotoModal;
 window.togglePhotoSelection = togglePhotoSelection;
+
+
