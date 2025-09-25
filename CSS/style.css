@@ -390,7 +390,6 @@ textarea:focus {
 }
 
 .toast.success::before {
-    content: '✓   ';
     background: none;
     color: #28a745;
     font-weight: bold;
@@ -403,7 +402,6 @@ textarea:focus {
 }
 
 .toast.error::before {
-    content: '✕   ';
     background: none;
     color: #dc3545;
     font-weight: bold;
@@ -416,7 +414,6 @@ textarea:focus {
 }
 
 .toast.warning::before {
-    content: '⚠   ';
     background: none;
     color: #ffc107;
     font-weight: bold;
@@ -429,7 +426,6 @@ textarea:focus {
 }
 
 .toast.info::before {
-    content: 'ℹ   ';
     background: none;
     color: #17a2b8;
     font-weight: bold;
@@ -566,10 +562,10 @@ textarea:focus {
 /* Responsive Design */
 @media (max-width: 768px) {
     .toast-container {
-        top: 10px;
+        top: 95%;
         right: 10px;
-        left: 10px;
-        max-width: none;
+        left: 70%;
+        max-width: 250px;
     }
     
     .toast {
@@ -591,9 +587,10 @@ textarea:focus {
 
 @media (max-width: 480px) {
     .toast-container {
-        top: 5px;
+        top: 93%;
         right: 5px;
-        left: 5px;
+        left: 45%;
+        max-width: auto;
     }
     
     .toast {
