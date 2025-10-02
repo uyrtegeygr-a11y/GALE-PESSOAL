@@ -5,6 +5,7 @@ const SHEET_API_URL = 'https://api.sheetmonkey.io/form/v1L6XCN5YiXywb6iTBvQtQ';
 let currentUser = null;
 let photos = [];
 let selectedPhotos = new Set();
+let uploadedPhotoHashes = new Set(); // Para prevenir duplicatas
 
 // Elementos DOM
 const loginScreen = document.getElementById('loginScreen');
@@ -38,14 +39,22 @@ function initializeApp() {
 
 function setupEventListeners() {
     // Login
-    loginForm.addEventListener('submit', handleLogin);
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleLogin);
+    }
 
     // Upload
-    uploadForm.addEventListener('submit', handleUpload);
-    fileInput.addEventListener('change', handleFileSelect);
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', handleDragOver);
-    dropZone.addEventListener('drop', handleDrop);
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', handleUpload);
+    }
+    if (fileInput) {
+        fileInput.addEventListener('change', handleFileSelect);
+    }
+    if (dropZone) {
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', handleDragOver);
+        dropZone.addEventListener('drop', handleDrop);
+    }
 
     // Tabs
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -53,21 +62,48 @@ function setupEventListeners() {
     });
 
     // Header buttons
-    document.getElementById('logoutBtn').addEventListener('click', handleLogout);
-    document.getElementById('syncBtn').addEventListener('click', syncData);
+    const logoutBtn = document.getElementById('logoutBtn');
+    const syncBtn = document.getElementById('syncBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
+    if (syncBtn) {
+        syncBtn.addEventListener('click', syncData);
+    }
 
     // Modal
-    document.getElementById('closeModalBtn').addEventListener('click', closeModal);
-    document.getElementById('deletePhotoBtn').addEventListener('click', deleteCurrentPhoto);
-    document.getElementById('downloadPhotoBtn').addEventListener('click', downloadCurrentPhoto);
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const deletePhotoBtn = document.getElementById('deletePhotoBtn');
+    const downloadPhotoBtn = document.getElementById('downloadPhotoBtn');
+    if (closeModalBtn) {
+        closeModalBtn.addEventListener('click', closeModal);
+    }
+    if (deletePhotoBtn) {
+        deletePhotoBtn.addEventListener('click', deleteCurrentPhoto);
+    }
+    if (downloadPhotoBtn) {
+        downloadPhotoBtn.addEventListener('click', downloadCurrentPhoto);
+    }
 
-    // Search
-    document.getElementById('searchQuery').addEventListener('input');
-    document.getElementById('searchTags').addEventListener('input');
+    // Search - CORRIGIDO: Adicionado handler de função
+    const searchQuery = document.getElementById('searchQuery');
+    const searchTags = document.getElementById('searchTags');
+    if (searchQuery) {
+        searchQuery.addEventListener('input', filterPhotos);
+    }
+    if (searchTags) {
+        searchTags.addEventListener('input', filterPhotos);
+    }
 
     // Bulk actions
-    document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
-    document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelectedPhotos);
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', clearSelection);
+    }
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.addEventListener('click', deleteSelectedPhotos);
+    }
 }
 
 // Login
@@ -76,18 +112,18 @@ async function handleLogin(event) {
     const email = document.getElementById('email').value.trim();
 
     if (!email) {
-        showToast(' Por favor, insira um email válido', 'error');
+        showToast('Por favor, insira um email válido', 'error');
         return;
     }
 
     // Validação básica de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-        showToast(' Por favor, insira um email válido', 'error');
+        showToast('Por favor, insira um email válido', 'error');
         return;
     }
 
-    showLoading(' Fazendo login...');
+    showLoading('Fazendo login...');
 
     try {
         // Fazer login localmente primeiro
@@ -96,25 +132,26 @@ async function handleLogin(event) {
 
         // Tentar logar na planilha (não bloquear o login se falhar)
         logUserActivity(email, 'login').catch(error => {
-            console.warn(' Aviso: Não foi possível logar atividade na planilha:', error);
-            showToast(' Login realizado (modo offline)', 'warning');
+            console.warn('Aviso: Não foi possível logar atividade na planilha:', error);
+            showToast('Login realizado (modo offline)', 'warning');
         });
 
         hideLoading();
         showGalleryScreen();
-        showToast(' Login realizado com sucesso!', 'success');
+        showToast('Login realizado com sucesso!', 'success');
 
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao fazer login. Tente novamente.', 'error');
+        showToast('Erro ao fazer login. Tente novamente.', 'error');
         console.error('Erro no login:', error);
     }
 }
 
 function showGalleryScreen() {
-    loginScreen.classList.remove('active');
-    galleryScreen.classList.add('active');
-    document.getElementById('userEmail').textContent = currentUser;
+    if (loginScreen) loginScreen.classList.remove('active');
+    if (galleryScreen) galleryScreen.classList.add('active');
+    const userEmailElement = document.getElementById('userEmail');
+    if (userEmailElement) userEmailElement.textContent = currentUser;
     loadPhotos();
     updateStats();
 }
@@ -122,11 +159,13 @@ function showGalleryScreen() {
 function handleLogout() {
     currentUser = null;
     localStorage.removeItem('currentUser');
-    galleryScreen.classList.remove('active');
-    loginScreen.classList.add('active');
-    document.getElementById('email').value = '';
+    if (galleryScreen) galleryScreen.classList.remove('active');
+    if (loginScreen) loginScreen.classList.add('active');
+    const emailInput = document.getElementById('email');
+    if (emailInput) emailInput.value = '';
     photos = [];
     selectedPhotos.clear();
+    uploadedPhotoHashes.clear();
 }
 
 // Upload de fotos
@@ -137,12 +176,12 @@ function handleFileSelect(event) {
 
 function handleDragOver(event) {
     event.preventDefault();
-    dropZone.classList.add('dragover');
+    if (dropZone) dropZone.classList.add('dragover');
 }
 
 function handleDrop(event) {
     event.preventDefault();
-    dropZone.classList.remove('dragover');
+    if (dropZone) dropZone.classList.remove('dragover');
 
     const files = Array.from(event.dataTransfer.files).filter(file => file.type.startsWith('image/'));
     if (files.length > 0) {
@@ -159,13 +198,14 @@ function createFileList(files) {
 
 function displayPreview(files) {
     if (files.length === 0) {
-        previewSection.classList.add('hidden');
-        document.getElementById('uploadBtn').disabled = true;
+        if (previewSection) previewSection.classList.add('hidden');
+        const uploadBtn = document.getElementById('uploadBtn');
+        if (uploadBtn) uploadBtn.disabled = true;
         return;
     }
 
-    previewSection.classList.remove('hidden');
-    previewGrid.innerHTML = '';
+    if (previewSection) previewSection.classList.remove('hidden');
+    if (previewGrid) previewGrid.innerHTML = '';
 
     files.forEach((file, index) => {
         const reader = new FileReader();
@@ -176,12 +216,13 @@ function displayPreview(files) {
                 <img src="${e.target.result}" alt="${file.name}">
                 <button type="button" class="preview-remove" onclick="removePreview(${index})">×</button>
             `;
-            previewGrid.appendChild(previewItem);
+            if (previewGrid) previewGrid.appendChild(previewItem);
         };
         reader.readAsDataURL(file);
     });
 
-    document.getElementById('uploadBtn').disabled = false;
+    const uploadBtn = document.getElementById('uploadBtn');
+    if (uploadBtn) uploadBtn.disabled = false;
 }
 
 function removePreview(index) {
@@ -191,46 +232,93 @@ function removePreview(index) {
     displayPreview(files);
 }
 
+// Função para gerar hash da foto (prevenir duplicatas)
+async function generatePhotoHash(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = e.target.result;
+            // Criar hash simples baseado no conteúdo, nome e tamanho
+            const hashString = data + file.name + file.size + file.lastModified;
+            let hash = 0;
+            for (let i = 0; i < hashString.length; i++) {
+                const char = hashString.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32bit integer
+            }
+            resolve(Math.abs(hash).toString(36));
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
 async function handleUpload(event) {
     event.preventDefault();
 
     const files = Array.from(fileInput.files);
-    const tags = document.getElementById('photoTags').value.trim();
+    const tagsInput = document.getElementById('photoTags');
+    const tags = tagsInput ? tagsInput.value.trim() : '';
 
     if (files.length === 0) {
-        showToast(' Selecione pelo menos uma foto', 'warning');
+        showToast('Selecione pelo menos uma foto', 'warning');
         return;
     }
 
-    showLoading('Fazendo upload das fotos...');
+    showLoading('Verificando e fazendo upload das fotos...');
 
     try {
+        let uploadedCount = 0;
+        let duplicateCount = 0;
+
         for (const file of files) {
-            await uploadSinglePhoto(file, tags);
+            const photoHash = await generatePhotoHash(file);
+            
+            // Verificar se a foto já foi enviada
+            if (uploadedPhotoHashes.has(photoHash)) {
+                duplicateCount++;
+                console.log(`Foto duplicada ignorada: ${file.name}`);
+                continue;
+            }
+
+            await uploadSinglePhoto(file, tags, photoHash);
+            uploadedPhotoHashes.add(photoHash);
+            uploadedCount++;
         }
 
         // Reset form
         fileInput.value = '';
-        document.getElementById('photoTags').value = '';
-        previewSection.classList.add('hidden');
-        document.getElementById('uploadBtn').disabled = true;
+        if (tagsInput) tagsInput.value = '';
+        if (previewSection) previewSection.classList.add('hidden');
+        const uploadBtn = document.getElementById('uploadBtn');
+        if (uploadBtn) uploadBtn.disabled = true;
 
         hideLoading();
         loadPhotos();
         updateStats();
-        showToast(` ${files.length} foto(s) enviada(s) com sucesso!`, 'success');
+
+        // Mensagem de sucesso personalizada
+        let message = '';
+        if (uploadedCount > 0 && duplicateCount > 0) {
+            message = `${uploadedCount} foto(s) enviada(s) com sucesso! ${duplicateCount} foto(s) duplicada(s) ignorada(s).`;
+        } else if (uploadedCount > 0) {
+            message = `${uploadedCount} foto(s) enviada(s) com sucesso!`;
+        } else {
+            message = `Todas as ${duplicateCount} foto(s) já foram enviadas anteriormente.`;
+        }
+        
+        showToast(message, uploadedCount > 0 ? 'success' : 'warning');
 
         // Switch to gallery tab
         switchTab('gallery');
 
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao fazer upload. Tente novamente.', 'error');
+        showToast('Erro ao fazer upload. Tente novamente.', 'error');
         console.error('Erro no upload:', error);
     }
 }
 
-async function uploadSinglePhoto(file, tags) {
+async function uploadSinglePhoto(file, tags, photoHash) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async function (e) {
@@ -244,7 +332,8 @@ async function uploadSinglePhoto(file, tags) {
                     type: file.type,
                     tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
                     uploadDate: new Date().toISOString(),
-                    userEmail: currentUser
+                    userEmail: currentUser,
+                    hash: photoHash // Adicionar hash para controle de duplicatas
                 };
 
                 // Salvar localmente
@@ -252,7 +341,7 @@ async function uploadSinglePhoto(file, tags) {
 
                 // Tentar enviar para a planilha (não bloquear se falhar)
                 logPhotoUpload(photoData).catch(error => {
-                    console.warn(' Aviso: Não foi possível logar upload na planilha:', error);
+                    console.warn('Aviso: Não foi possível logar upload na planilha:', error);
                 });
 
                 resolve();
@@ -265,10 +354,10 @@ async function uploadSinglePhoto(file, tags) {
     });
 }
 
-// Armazenamento local
+// Armazenamento local - CORRIGIDO: Migração de versão do IndexedDB
 async function savePhotoLocally(photoData) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 4); // Versão atualizada
 
         request.onerror = () => reject(request.error);
 
@@ -282,12 +371,28 @@ async function savePhotoLocally(photoData) {
             addRequest.onerror = () => reject(addRequest.error);
         };
 
-        request.onupgradeneeded = () => {
-            const db = request.result;
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            const oldVersion = event.oldVersion;
+            const newVersion = event.newVersion;
+
+            console.log(`Atualizando IndexedDB da versão ${oldVersion} para ${newVersion}`);
+
+            // Criar object store se não existir
             if (!db.objectStoreNames.contains('photos')) {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                store.createIndex('hash', 'hash', { unique: false }); // Novo índice para hash
+            } else {
+                // Atualizar store existente se necessário
+                const transaction = event.target.transaction;
+                const store = transaction.objectStore('photos');
+                
+                // Adicionar novo índice se não existir
+                if (!store.indexNames.contains('hash')) {
+                    store.createIndex('hash', 'hash', { unique: false });
+                }
             }
         };
     });
@@ -297,10 +402,19 @@ async function loadPhotos() {
     try {
         const storedPhotos = await getPhotosFromStorage();
         photos = storedPhotos.filter(photo => photo.userEmail === currentUser);
+        
+        // Carregar hashes das fotos existentes para prevenir duplicatas
+        uploadedPhotoHashes.clear();
+        photos.forEach(photo => {
+            if (photo.hash) {
+                uploadedPhotoHashes.add(photo.hash);
+            }
+        });
+        
         displayPhotos(photos);
         updatePhotoCount();
     } catch (error) {
-        console.error(' Erro ao carregar fotos:', error);
+        console.error('Erro ao carregar fotos:', error);
         photos = [];
         displayPhotos([]);
     }
@@ -308,7 +422,7 @@ async function loadPhotos() {
 
 async function getPhotosFromStorage() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 4);
 
         request.onerror = () => reject(request.error);
 
@@ -322,18 +436,21 @@ async function getPhotosFromStorage() {
             getAllRequest.onerror = () => reject(getAllRequest.error);
         };
 
-        request.onupgradeneeded = () => {
-            const db = request.result;
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
             if (!db.objectStoreNames.contains('photos')) {
                 const store = db.createObjectStore('photos', { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                store.createIndex('hash', 'hash', { unique: false });
             }
         };
     });
 }
 
 function displayPhotos(photosToShow) {
+    if (!photoGrid) return;
+
     if (photosToShow.length === 0) {
         photoGrid.innerHTML = `
             <div class="empty-state">
@@ -360,7 +477,7 @@ function displayPhotos(photosToShow) {
     `).join('');
 }
 
-// API calls para planilha (otimizado para SheetMonkey)
+// API calls para planilha (otimizado para SheetMonkey) - MELHORADO: Prevenção de duplicatas
 async function logUserActivity(email, activity) {
     try {
         const response = await fetch(SHEET_API_URL, {
@@ -383,14 +500,20 @@ async function logUserActivity(email, activity) {
 
         return await response.json();
     } catch (error) {
-        console.error(' Erro ao logar atividade do usuário:', error);
-        // Não propagar o erro para não bloquear o login
+        console.error('Erro ao logar atividade do usuário:', error);
         return null;
     }
 }
 
 async function logPhotoUpload(photoData) {
     try {
+        // Verificar se já foi enviado para a planilha usando hash
+        const existingUploads = JSON.parse(localStorage.getItem('uploadedToSheet') || '[]');
+        if (existingUploads.includes(photoData.hash)) {
+            console.log('Foto já foi enviada para a planilha anteriormente');
+            return null;
+        }
+
         // Criar thumbnail otimizado para SheetMonkey
         const thumbnailData = await createOptimizedThumbnail(photoData.data, 600, 600);
 
@@ -419,6 +542,7 @@ async function logPhotoUpload(photoData) {
                 Tags: photoData.tags.join(', '),
                 UploadDate: photoData.uploadDate,
                 Thumbnail: finalThumbnail,
+                PhotoHash: photoData.hash, // Adicionar hash para controle de duplicatas
                 Type: 'photo_upload'
             })
         });
@@ -427,10 +551,13 @@ async function logPhotoUpload(photoData) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
+        // Marcar como enviado para a planilha
+        existingUploads.push(photoData.hash);
+        localStorage.setItem('uploadedToSheet', JSON.stringify(existingUploads));
+
         return await response.json();
     } catch (error) {
-        console.error(' Erro ao logar upload da foto:', error);
-        // Não propagar o erro para não bloquear o upload
+        console.error('Erro ao logar upload da foto:', error);
         return null;
     }
 }
@@ -479,21 +606,31 @@ async function createOptimizedThumbnail(imageData, maxWidth, maxHeight) {
 // Modal de foto
 function openPhotoModal(photoId) {
     const photo = photos.find(p => p.id === photoId);
-    if (!photo) return;
+    if (!photo || !photoModal) return;
 
-    document.getElementById('modalPhotoName').textContent = photo.name;
-    document.getElementById('modalPhoto').src = photo.data;
-    document.getElementById('modalOriginalName').textContent = photo.originalName;
-    document.getElementById('modalUploadDate').textContent = formatDate(photo.uploadDate);
-    document.getElementById('modalFileSize').textContent = formatFileSize(photo.size);
-    document.getElementById('modalFileType').textContent = photo.type;
+    const modalPhotoName = document.getElementById('modalPhotoName');
+    const modalPhoto = document.getElementById('modalPhoto');
+    const modalOriginalName = document.getElementById('modalOriginalName');
+    const modalUploadDate = document.getElementById('modalUploadDate');
+    const modalFileSize = document.getElementById('modalFileSize');
+    const modalFileType = document.getElementById('modalFileType');
+
+    if (modalPhotoName) modalPhotoName.textContent = photo.name;
+    if (modalPhoto) modalPhoto.src = photo.data;
+    if (modalOriginalName) modalOriginalName.textContent = photo.originalName;
+    if (modalUploadDate) modalUploadDate.textContent = formatDate(photo.uploadDate);
+    if (modalFileSize) modalFileSize.textContent = formatFileSize(photo.size);
+    if (modalFileType) modalFileType.textContent = photo.type;
 
     const tagsContainer = document.getElementById('modalTags');
-    if (photo.tags.length > 0) {
-        tagsContainer.innerHTML = photo.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
-        document.getElementById('modalTagsSection').style.display = 'flex';
-    } else {
-        document.getElementById('modalTagsSection').style.display = 'none';
+    const modalTagsSection = document.getElementById('modalTagsSection');
+    if (tagsContainer && modalTagsSection) {
+        if (photo.tags.length > 0) {
+            tagsContainer.innerHTML = photo.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
+            modalTagsSection.style.display = 'flex';
+        } else {
+            modalTagsSection.style.display = 'none';
+        }
     }
 
     photoModal.classList.remove('hidden');
@@ -501,10 +638,11 @@ function openPhotoModal(photoId) {
 }
 
 function closeModal() {
-    photoModal.classList.add('hidden');
+    if (photoModal) photoModal.classList.add('hidden');
 }
 
 async function deleteCurrentPhoto() {
+    if (!photoModal) return;
     const photoId = photoModal.dataset.currentPhotoId;
     if (!photoId) return;
 
@@ -516,14 +654,15 @@ async function deleteCurrentPhoto() {
         displayPhotos(photos);
         updatePhotoCount();
         closeModal();
-        showToast(' Foto excluída com sucesso!', 'success');
+        showToast('Foto excluída com sucesso!', 'success');
     } catch (error) {
-        showToast(' Erro ao excluir foto', 'error');
-        console.error(' Erro ao excluir foto:', error);
+        showToast('Erro ao excluir foto', 'error');
+        console.error('Erro ao excluir foto:', error);
     }
 }
 
 function downloadCurrentPhoto() {
+    if (!photoModal) return;
     const photoId = photoModal.dataset.currentPhotoId;
     const photo = photos.find(p => p.id === photoId);
     if (!photo) return;
@@ -549,11 +688,13 @@ function updateBulkActions() {
     const bulkActions = document.getElementById('bulkActions');
     const selectedCount = document.getElementById('selectedCount');
 
-    if (selectedPhotos.size > 0) {
-        bulkActions.classList.remove('hidden');
-        selectedCount.textContent = `${selectedPhotos.size} foto${selectedPhotos.size > 1 ? 's' : ''} selecionada${selectedPhotos.size > 1 ? 's' : ''}`;
-    } else {
-        bulkActions.classList.add('hidden');
+    if (bulkActions && selectedCount) {
+        if (selectedPhotos.size > 0) {
+            bulkActions.classList.remove('hidden');
+            selectedCount.textContent = `${selectedPhotos.size} foto${selectedPhotos.size > 1 ? 's' : ''} selecionada${selectedPhotos.size > 1 ? 's' : ''}`;
+        } else {
+            bulkActions.classList.add('hidden');
+        }
     }
 }
 
@@ -583,17 +724,17 @@ async function deleteSelectedPhotos() {
         updateBulkActions();
 
         hideLoading();
-        showToast(' Fotos excluídas com sucesso!', 'success');
+        showToast('Fotos excluídas com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast(' Erro ao excluir fotos', 'error');
+        showToast('Erro ao excluir fotos', 'error');
         console.error('Erro ao excluir fotos:', error);
     }
 }
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 1);
+        const request = indexedDB.open('PhotoGallery', 4);
 
         request.onerror = () => reject(request.error);
 
@@ -611,8 +752,11 @@ async function deletePhotoFromStorage(photoId) {
 
 // Filtros e busca
 function filterPhotos() {
-    const query = document.getElementById('searchQuery').value.toLowerCase();
-    const tags = document.getElementById('searchTags').value.toLowerCase();
+    const searchQuery = document.getElementById('searchQuery');
+    const searchTags = document.getElementById('searchTags');
+    
+    const query = searchQuery ? searchQuery.value.toLowerCase() : '';
+    const tags = searchTags ? searchTags.value.toLowerCase() : '';
 
     let filteredPhotos = photos;
 
@@ -624,9 +768,9 @@ function filterPhotos() {
     }
 
     if (tags) {
-        const searchTags = tags.split(',').map(tag => tag.trim());
+        const searchTagsArray = tags.split(',').map(tag => tag.trim());
         filteredPhotos = filteredPhotos.filter(photo =>
-            searchTags.some(searchTag =>
+            searchTagsArray.some(searchTag =>
                 photo.tags.some(photoTag =>
                     photoTag.toLowerCase().includes(searchTag)
                 )
@@ -643,13 +787,15 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    const activeTab = document.querySelector(`[data-tab="${tabName}"]`);
+    if (activeTab) activeTab.classList.add('active');
 
     // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.remove('active');
     });
-    document.getElementById(`${tabName}Tab`).classList.add('active');
+    const activeContent = document.getElementById(`${tabName}Tab`);
+    if (activeContent) activeContent.classList.add('active');
 }
 
 // Sincronização
@@ -663,10 +809,10 @@ async function syncData() {
         }
 
         hideLoading();
-        showToast(' Dados sincronizados com sucesso!', 'success');
+        showToast('Dados sincronizados com sucesso!', 'success');
     } catch (error) {
         hideLoading();
-        showToast(' Sincronização realizada localmente', 'warning');
+        showToast('Sincronização realizada localmente', 'warning');
         console.warn('Erro na sincronização:', error);
     }
 }
@@ -676,24 +822,31 @@ function updateStats() {
     updatePhotoCount();
 
     // Estatísticas locais
-    document.getElementById('localPhotoCount').textContent = `${photos.length} fotos armazenadas`;
-    document.getElementById('totalPhotos').textContent = photos.length;
+    const localPhotoCount = document.getElementById('localPhotoCount');
+    const totalPhotos = document.getElementById('totalPhotos');
+    if (localPhotoCount) localPhotoCount.textContent = `${photos.length} fotos armazenadas`;
+    if (totalPhotos) totalPhotos.textContent = photos.length;
 
     // Uploads hoje
     const today = new Date().toDateString();
     const todayUploads = photos.filter(photo =>
         new Date(photo.uploadDate).toDateString() === today
     ).length;
-    document.getElementById('todayUploads').textContent = todayUploads;
+    const todayUploadsElement = document.getElementById('todayUploads');
+    if (todayUploadsElement) todayUploadsElement.textContent = todayUploads;
 
     // Usuários únicos (simulado localmente)
     const uniqueUsers = new Set([currentUser]).size;
-    document.getElementById('uniqueUsers').textContent = uniqueUsers;
+    const uniqueUsersElement = document.getElementById('uniqueUsers');
+    if (uniqueUsersElement) uniqueUsersElement.textContent = uniqueUsers;
 }
 
 function updatePhotoCount() {
     const count = photos.length;
-    document.getElementById('photoCount').textContent = `${count} foto${count !== 1 ? 's' : ''}`;
+    const photoCountElement = document.getElementById('photoCount');
+    if (photoCountElement) {
+        photoCountElement.textContent = `${count} foto${count !== 1 ? 's' : ''}`;
+    }
 }
 
 // Utilitários
@@ -718,15 +871,18 @@ function formatFileSize(bytes) {
 }
 
 function showLoading(text = 'Carregando...') {
-    document.getElementById('loadingText').textContent = text;
-    loadingOverlay.classList.remove('hidden');
+    const loadingText = document.getElementById('loadingText');
+    if (loadingText) loadingText.textContent = text;
+    if (loadingOverlay) loadingOverlay.classList.remove('hidden');
 }
 
 function hideLoading() {
-    loadingOverlay.classList.add('hidden');
+    if (loadingOverlay) loadingOverlay.classList.add('hidden');
 }
 
 function showToast(message, type = 'info') {
+    if (!toastContainer) return;
+    
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
@@ -747,16 +903,18 @@ function loadStoredData() {
 }
 
 // Event listeners para modal (fechar ao clicar fora)
-photoModal.addEventListener('click', function (event) {
-    if (event.target === photoModal) {
-        closeModal();
-    }
-});
+if (photoModal) {
+    photoModal.addEventListener('click', function (event) {
+        if (event.target === photoModal) {
+            closeModal();
+        }
+    });
+}
 
 // Keyboard shortcuts
 document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') {
-        if (!photoModal.classList.contains('hidden')) {
+        if (photoModal && !photoModal.classList.contains('hidden')) {
             closeModal();
         }
     }
@@ -766,6 +924,3 @@ document.addEventListener('keydown', function (event) {
 window.removePreview = removePreview;
 window.openPhotoModal = openPhotoModal;
 window.togglePhotoSelection = togglePhotoSelection;
-
-
-
