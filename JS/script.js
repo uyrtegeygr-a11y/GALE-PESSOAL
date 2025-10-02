@@ -354,47 +354,109 @@ async function uploadSinglePhoto(file, tags, photoHash) {
     });
 }
 
-// Armazenamento local - CORRIGIDO: Migração de versão do IndexedDB
-async function savePhotoLocally(photoData) {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4); // Versão atualizada
-
-        request.onerror = () => reject(request.error);
-
-        request.onsuccess = () => {
-            const db = request.result;
-            const transaction = db.transaction(['photos'], 'readwrite');
-            const store = transaction.objectStore('photos');
-
-            const addRequest = store.add(photoData);
-            addRequest.onsuccess = () => resolve();
-            addRequest.onerror = () => reject(addRequest.error);
+// CORRIGIDO: Função para limpar banco antigo e criar novo
+async function clearOldDatabase() {
+    return new Promise((resolve) => {
+        const deleteRequest = indexedDB.deleteDatabase('PhotoGallery');
+        deleteRequest.onsuccess = () => {
+            console.log('Banco antigo removido com sucesso');
+            resolve();
         };
+        deleteRequest.onerror = () => {
+            console.log('Erro ao remover banco antigo, continuando...');
+            resolve();
+        };
+        deleteRequest.onblocked = () => {
+            console.log('Remoção do banco bloqueada, continuando...');
+            resolve();
+        };
+    });
+}
 
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            const oldVersion = event.oldVersion;
-            const newVersion = event.newVersion;
-
-            console.log(`Atualizando IndexedDB da versão ${oldVersion} para ${newVersion}`);
-
-            // Criar object store se não existir
-            if (!db.objectStoreNames.contains('photos')) {
-                const store = db.createObjectStore('photos', { keyPath: 'id' });
-                store.createIndex('userEmail', 'userEmail', { unique: false });
-                store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                store.createIndex('hash', 'hash', { unique: false }); // Novo índice para hash
-            } else {
-                // Atualizar store existente se necessário
-                const transaction = event.target.transaction;
-                const store = transaction.objectStore('photos');
+// Armazenamento local - CORRIGIDO: Problema de versão do IndexedDB
+async function savePhotoLocally(photoData) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Primeiro, tentar abrir com versão atual
+            let request = indexedDB.open('PhotoGallery');
+            
+            request.onerror = async () => {
+                // Se falhar, limpar banco e criar novo
+                await clearOldDatabase();
+                const newRequest = indexedDB.open('PhotoGallery', 1);
                 
-                // Adicionar novo índice se não existir
-                if (!store.indexNames.contains('hash')) {
+                newRequest.onerror = () => reject(newRequest.error);
+                
+                newRequest.onsuccess = () => {
+                    const db = newRequest.result;
+                    const transaction = db.transaction(['photos'], 'readwrite');
+                    const store = transaction.objectStore('photos');
+
+                    const addRequest = store.add(photoData);
+                    addRequest.onsuccess = () => resolve();
+                    addRequest.onerror = () => reject(addRequest.error);
+                };
+
+                newRequest.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    const store = db.createObjectStore('photos', { keyPath: 'id' });
+                    store.createIndex('userEmail', 'userEmail', { unique: false });
+                    store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                    store.createIndex('hash', 'hash', { unique: false });
+                };
+            };
+
+            request.onsuccess = () => {
+                const db = request.result;
+                
+                // Verificar se o store existe
+                if (!db.objectStoreNames.contains('photos')) {
+                    db.close();
+                    // Recriar banco com versão incrementada
+                    const upgradeRequest = indexedDB.open('PhotoGallery', db.version + 1);
+                    
+                    upgradeRequest.onerror = () => reject(upgradeRequest.error);
+                    
+                    upgradeRequest.onsuccess = () => {
+                        const newDb = upgradeRequest.result;
+                        const transaction = newDb.transaction(['photos'], 'readwrite');
+                        const store = transaction.objectStore('photos');
+
+                        const addRequest = store.add(photoData);
+                        addRequest.onsuccess = () => resolve();
+                        addRequest.onerror = () => reject(addRequest.error);
+                    };
+
+                    upgradeRequest.onupgradeneeded = (event) => {
+                        const newDb = event.target.result;
+                        const store = newDb.createObjectStore('photos', { keyPath: 'id' });
+                        store.createIndex('userEmail', 'userEmail', { unique: false });
+                        store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                        store.createIndex('hash', 'hash', { unique: false });
+                    };
+                } else {
+                    // Store existe, usar normalmente
+                    const transaction = db.transaction(['photos'], 'readwrite');
+                    const store = transaction.objectStore('photos');
+
+                    const addRequest = store.add(photoData);
+                    addRequest.onsuccess = () => resolve();
+                    addRequest.onerror = () => reject(addRequest.error);
+                }
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('photos')) {
+                    const store = db.createObjectStore('photos', { keyPath: 'id' });
+                    store.createIndex('userEmail', 'userEmail', { unique: false });
+                    store.createIndex('uploadDate', 'uploadDate', { unique: false });
                     store.createIndex('hash', 'hash', { unique: false });
                 }
-            }
-        };
+            };
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 
@@ -421,30 +483,64 @@ async function loadPhotos() {
 }
 
 async function getPhotosFromStorage() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4);
+    return new Promise(async (resolve, reject) => {
+        try {
+            let request = indexedDB.open('PhotoGallery');
+            
+            request.onerror = async () => {
+                // Se falhar, criar banco novo
+                await clearOldDatabase();
+                const newRequest = indexedDB.open('PhotoGallery', 1);
+                
+                newRequest.onerror = () => reject(newRequest.error);
+                
+                newRequest.onsuccess = () => {
+                    const db = newRequest.result;
+                    const transaction = db.transaction(['photos'], 'readonly');
+                    const store = transaction.objectStore('photos');
 
-        request.onerror = () => reject(request.error);
+                    const getAllRequest = store.getAll();
+                    getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
+                    getAllRequest.onerror = () => reject(getAllRequest.error);
+                };
 
-        request.onsuccess = () => {
-            const db = request.result;
-            const transaction = db.transaction(['photos'], 'readonly');
-            const store = transaction.objectStore('photos');
+                newRequest.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    const store = db.createObjectStore('photos', { keyPath: 'id' });
+                    store.createIndex('userEmail', 'userEmail', { unique: false });
+                    store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                    store.createIndex('hash', 'hash', { unique: false });
+                };
+            };
 
-            const getAllRequest = store.getAll();
-            getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
-            getAllRequest.onerror = () => reject(getAllRequest.error);
-        };
+            request.onsuccess = () => {
+                const db = request.result;
+                
+                if (!db.objectStoreNames.contains('photos')) {
+                    // Store não existe, retornar array vazio
+                    resolve([]);
+                } else {
+                    const transaction = db.transaction(['photos'], 'readonly');
+                    const store = transaction.objectStore('photos');
 
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            if (!db.objectStoreNames.contains('photos')) {
-                const store = db.createObjectStore('photos', { keyPath: 'id' });
-                store.createIndex('userEmail', 'userEmail', { unique: false });
-                store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                store.createIndex('hash', 'hash', { unique: false });
-            }
-        };
+                    const getAllRequest = store.getAll();
+                    getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
+                    getAllRequest.onerror = () => reject(getAllRequest.error);
+                }
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('photos')) {
+                    const store = db.createObjectStore('photos', { keyPath: 'id' });
+                    store.createIndex('userEmail', 'userEmail', { unique: false });
+                    store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                    store.createIndex('hash', 'hash', { unique: false });
+                }
+            };
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 
@@ -734,12 +830,18 @@ async function deleteSelectedPhotos() {
 
 async function deletePhotoFromStorage(photoId) {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('PhotoGallery', 4);
+        const request = indexedDB.open('PhotoGallery');
 
         request.onerror = () => reject(request.error);
 
         request.onsuccess = () => {
             const db = request.result;
+            
+            if (!db.objectStoreNames.contains('photos')) {
+                resolve(); // Se não existe, considerar como deletado
+                return;
+            }
+            
             const transaction = db.transaction(['photos'], 'readwrite');
             const store = transaction.objectStore('photos');
 
